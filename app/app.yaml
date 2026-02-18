@@ -1,0 +1,10 @@
+command:
+  - python
+  - mcp_server.py
+
+resources:
+  - name: database
+    database:
+      instance_name: supply-chain
+      database_name: supply_chain_db
+      permission: CAN_CONNECT_AND_CREATE
