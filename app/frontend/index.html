@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lakebase MCP Server</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface2: #22263a;
+    --border: #2d3148;
+    --text: #e1e4ed;
+    --text2: #8b8fa8;
+    --accent: #ff6b35;
+    --accent2: #3b82f6;
+    --green: #22c55e;
+    --red: #ef4444;
+    --yellow: #eab308;
+    --purple: #a855f7;
+    --radius: 8px;
+    --shadow: 0 2px 8px rgba(0,0,0,0.3);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; }
+  a { color: var(--accent2); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  /* Layout */
+  .header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 12px 24px; display: flex; align-items: center; gap: 16px; position: sticky; top: 0; z-index: 100; }
+  .header h1 { font-size: 18px; font-weight: 600; color: var(--accent); }
+  .header .status { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: 13px; }
+  .header .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .header .dot.ok { background: var(--green); }
+  .header .dot.err { background: var(--red); }
+  .header .db-name { color: var(--text2); font-size: 13px; }
+
+  nav { background: var(--surface); border-bottom: 1px solid var(--border); display: flex; gap: 0; padding: 0 24px; }
+  nav button { background: none; border: none; color: var(--text2); padding: 10px 18px; font-size: 14px; cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.2s; }
+  nav button:hover { color: var(--text); }
+  nav button.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  .container { max-width: 1200px; margin: 0 auto; padding: 24px; }
+  .page { display: none; }
+  .page.active { display: block; }
+
+  /* Cards */
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 16px; overflow: hidden; }
+  .card-header { padding: 14px 18px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+  .card-header h2 { font-size: 15px; font-weight: 600; }
+  .card-body { padding: 18px; }
+
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); }
+  th { color: var(--text2); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; background: var(--surface2); position: sticky; top: 0; }
+  td { color: var(--text); }
+  tr:hover td { background: rgba(59, 130, 246, 0.05); }
+  .table-wrap { max-height: 500px; overflow: auto; }
+
+  /* Buttons */
+  .btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; border: 1px solid transparent; transition: all 0.2s; }
+  .btn-primary { background: var(--accent); color: white; }
+  .btn-primary:hover { background: #e55a28; }
+  .btn-secondary { background: var(--surface2); color: var(--text); border-color: var(--border); }
+  .btn-secondary:hover { background: var(--border); }
+  .btn-sm { padding: 4px 10px; font-size: 12px; }
+  .btn-danger { background: var(--red); color: white; }
+
+  /* Forms */
+  input, textarea, select { background: var(--surface2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; font-size: 13px; font-family: inherit; width: 100%; }
+  input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent2); }
+  textarea { resize: vertical; min-height: 80px; font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace; }
+  label { display: block; font-size: 12px; color: var(--text2); margin-bottom: 4px; font-weight: 500; }
+  .form-group { margin-bottom: 14px; }
+  .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+
+  /* Badges */
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+  .badge-read { background: rgba(59,130,246,0.15); color: var(--accent2); }
+  .badge-write { background: rgba(255,107,53,0.15); color: var(--accent); }
+  .badge-pk { background: rgba(168,85,247,0.15); color: var(--purple); }
+  .badge-null { background: rgba(139,143,168,0.15); color: var(--text2); }
+  .badge-type { background: rgba(34,197,94,0.15); color: var(--green); }
+
+  /* Results */
+  .result { background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; margin-top: 12px; font-family: 'SF Mono', Monaco, monospace; font-size: 12px; white-space: pre-wrap; max-height: 400px; overflow: auto; }
+  .result.error { border-color: var(--red); color: var(--red); }
+  .result.success { border-color: var(--green); }
+
+  /* Table list sidebar */
+  .explorer-layout { display: grid; grid-template-columns: 280px 1fr; gap: 16px; }
+  .table-list { list-style: none; }
+  .table-list li { padding: 8px 14px; cursor: pointer; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; transition: background 0.15s; }
+  .table-list li:hover { background: var(--surface2); }
+  .table-list li.active { background: var(--accent); background: rgba(255,107,53,0.12); color: var(--accent); }
+  .table-list .count { font-size: 11px; color: var(--text2); }
+
+  /* Docs */
+  .docs h3 { font-size: 16px; margin: 20px 0 10px 0; color: var(--accent); }
+  .docs h3:first-child { margin-top: 0; }
+  .docs p { margin-bottom: 10px; color: var(--text2); }
+  .docs code { background: var(--surface2); padding: 2px 6px; border-radius: 4px; font-size: 12px; color: var(--green); }
+  .docs pre { background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; margin: 10px 0; overflow-x: auto; font-size: 12px; line-height: 1.5; }
+  .docs pre code { background: none; padding: 0; }
+  .docs ul, .docs ol { margin: 8px 0 8px 24px; color: var(--text2); }
+  .docs li { margin-bottom: 4px; }
+  .docs .step { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin: 12px 0; }
+  .docs .step-num { display: inline-block; width: 24px; height: 24px; background: var(--accent); color: white; border-radius: 50%; text-align: center; line-height: 24px; font-size: 12px; font-weight: 700; margin-right: 8px; }
+
+  /* Tool cards */
+  .tool-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 12px; }
+  .tool-card h3 { font-size: 14px; font-weight: 600; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }
+  .tool-card p { font-size: 13px; color: var(--text2); margin-bottom: 12px; }
+  .tool-card .schema { font-family: monospace; font-size: 12px; color: var(--text2); background: var(--surface2); padding: 10px; border-radius: 6px; }
+
+  /* Loading */
+  .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.6s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Empty state */
+  .empty { text-align: center; padding: 40px; color: var(--text2); }
+  .empty .icon { font-size: 48px; margin-bottom: 12px; }
+
+  /* Responsive */
+  @media (max-width: 768px) {
+    .explorer-layout { grid-template-columns: 1fr; }
+    .form-row { grid-template-columns: 1fr; }
+    nav { overflow-x: auto; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Lakebase MCP Server</h1>
+  <span class="db-name" id="dbName">--</span>
+  <div class="status">
+    <span class="dot" id="statusDot"></span>
+    <span id="statusText">Connecting...</span>
+  </div>
+</div>
+
+<nav id="mainNav">
+  <button class="active" data-page="explorer">Database Explorer</button>
+  <button data-page="query">SQL Query</button>
+  <button data-page="tools">MCP Tools</button>
+  <button data-page="docs">Documentation</button>
+</nav>
+
+<div class="container">
+
+  <!-- ═══════ DATABASE EXPLORER ═══════ -->
+  <div id="page-explorer" class="page active">
+    <div class="explorer-layout">
+      <div class="card">
+        <div class="card-header">
+          <h2>Tables</h2>
+          <button class="btn btn-sm btn-secondary" onclick="loadTables()">Refresh</button>
+        </div>
+        <div class="card-body" style="padding: 8px;">
+          <ul class="table-list" id="tableList">
+            <li class="empty"><span class="spinner"></span></li>
+          </ul>
+        </div>
+      </div>
+      <div>
+        <div class="card" id="tableDetailCard" style="display:none">
+          <div class="card-header">
+            <h2 id="tableDetailName">--</h2>
+            <div>
+              <button class="btn btn-sm btn-secondary" onclick="loadSample()">View Data</button>
+            </div>
+          </div>
+          <div class="card-body">
+            <div class="table-wrap">
+              <table id="columnsTable">
+                <thead><tr><th>Column</th><th>Type</th><th>Nullable</th><th>Default</th><th>Key</th></tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        <div class="card" id="sampleCard" style="display:none">
+          <div class="card-header">
+            <h2>Sample Data</h2>
+            <span id="sampleCount" style="font-size:12px; color: var(--text2)"></span>
+          </div>
+          <div class="card-body">
+            <div class="table-wrap" id="sampleWrap"></div>
+          </div>
+        </div>
+        <div id="explorerEmpty" class="card">
+          <div class="card-body empty">
+            <div class="icon">&#x1f5c4;</div>
+            <p>Select a table to explore its schema and data</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════ SQL QUERY ═══════ -->
+  <div id="page-query" class="page">
+    <div class="card">
+      <div class="card-header"><h2>SQL Query</h2></div>
+      <div class="card-body">
+        <div class="form-group">
+          <label>SELECT query (read-only, max 500 rows)</label>
+          <textarea id="sqlInput" rows="4" placeholder="SELECT * FROM my_table LIMIT 10"></textarea>
+        </div>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <button class="btn btn-primary" onclick="runQuery()">Run Query</button>
+          <span id="queryStatus" style="font-size:12px; color:var(--text2)"></span>
+        </div>
+        <div id="queryResult"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════ MCP TOOLS ═══════ -->
+  <div id="page-tools" class="page">
+    <div class="card">
+      <div class="card-header">
+        <h2>Available MCP Tools</h2>
+        <span style="font-size:12px; color:var(--text2)">Endpoint: <code>/mcp/</code></span>
+      </div>
+      <div class="card-body" id="toolsList">
+        <div class="empty"><span class="spinner"></span></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><h2>Tool Playground</h2></div>
+      <div class="card-body">
+        <div class="form-group">
+          <label>Tool</label>
+          <select id="playTool" onchange="updatePlayForm()">
+            <option value="">Select a tool...</option>
+          </select>
+        </div>
+        <div id="playParams"></div>
+        <button class="btn btn-primary" onclick="runPlayTool()" id="playRunBtn" disabled>Execute Tool</button>
+        <div id="playResult"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════ DOCUMENTATION ═══════ -->
+  <div id="page-docs" class="page">
+    <div class="card">
+      <div class="card-body docs">
+        <h3>Overview</h3>
+        <p>The Lakebase MCP Server is a reusable <a href="https://modelcontextprotocol.io" target="_blank">Model Context Protocol</a> (MCP) server that exposes <a href="https://docs.databricks.com/en/database/lakebase/index.html" target="_blank">Databricks Lakebase</a> (PostgreSQL-compatible) read/write operations as tools for AI agents. Deploy it as a Databricks App, then connect it to a Multi-Agent Supervisor (MAS) as an External MCP Server agent.</p>
+
+        <h3>Architecture</h3>
+        <pre><code>AI Agent (MAS / Claude / etc.)
+    |
+    | MCP Protocol (StreamableHTTP)
+    v
+Lakebase MCP Server (Databricks App)
+    |
+    | psycopg2 (PostgreSQL wire protocol)
+    v
+Lakebase Instance (PostgreSQL-compatible)</code></pre>
+
+        <h3>MCP Tools (6)</h3>
+        <table>
+          <thead><tr><th>Tool</th><th>Type</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td><code>list_tables</code></td><td><span class="badge badge-read">READ</span></td><td>List all tables with row counts and column counts</td></tr>
+            <tr><td><code>describe_table</code></td><td><span class="badge badge-read">READ</span></td><td>Get column names, data types, constraints for a table</td></tr>
+            <tr><td><code>read_query</code></td><td><span class="badge badge-read">READ</span></td><td>Execute a read-only SELECT query (max 500 rows)</td></tr>
+            <tr><td><code>insert_record</code></td><td><span class="badge badge-write">WRITE</span></td><td>Insert a single record (parameterized)</td></tr>
+            <tr><td><code>update_records</code></td><td><span class="badge badge-write">WRITE</span></td><td>Update rows matching a WHERE condition</td></tr>
+            <tr><td><code>delete_records</code></td><td><span class="badge badge-write">WRITE</span></td><td>Delete rows matching a WHERE condition</td></tr>
+          </tbody>
+        </table>
+
+        <h3>Deployment Guide</h3>
+
+        <div class="step">
+          <span class="step-num">1</span> <strong>Create a Lakebase Instance</strong>
+          <pre><code>databricks lakebase instances create --name my-instance --profile MY_PROFILE
+# Wait 5-6 minutes for instance to start
+databricks lakebase instances get my-instance --profile MY_PROFILE</code></pre>
+        </div>
+
+        <div class="step">
+          <span class="step-num">2</span> <strong>Configure app.yaml</strong>
+          <p>Update <code>app/app.yaml</code> with your Lakebase instance and database names:</p>
+          <pre><code>command:
+  - python
+  - mcp_server.py
+
+resources:
+  - name: database
+    database:
+      instance_name: my-instance      # your Lakebase instance name
+      database_name: my_database       # your database name
+      permission: CAN_CONNECT_AND_CREATE</code></pre>
+        </div>
+
+        <div class="step">
+          <span class="step-num">3</span> <strong>Create & Deploy the App</strong>
+          <pre><code># Create the app
+databricks apps create lakebase-mcp-server --profile MY_PROFILE
+
+# Sync code to workspace
+databricks sync ./app /Workspace/Users/EMAIL/lakebase-mcp-server/app \
+  --profile MY_PROFILE --watch=false
+
+# Deploy
+databricks apps deploy lakebase-mcp-server \
+  --source-code-path /Workspace/Users/EMAIL/lakebase-mcp-server/app \
+  --profile MY_PROFILE</code></pre>
+        </div>
+
+        <div class="step">
+          <span class="step-num">4</span> <strong>Grant Permissions</strong>
+          <pre><code># Grant CAN_USE to users group (required for MAS MCP proxy)
+databricks api patch /api/2.0/permissions/apps/lakebase-mcp-server \
+  --json '{"access_control_list":[{"group_name":"users","permission_level":"CAN_USE"}]}' \
+  --profile MY_PROFILE
+
+# Grant Lakebase table access to app SP
+# Get SP client ID from: databricks apps get lakebase-mcp-server
+databricks psql my-instance --profile MY_PROFILE -- -d my_database -c "
+GRANT ALL ON ALL TABLES IN SCHEMA public TO \"APP_SP_CLIENT_ID\";
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO \"APP_SP_CLIENT_ID\";
+"</code></pre>
+        </div>
+
+        <div class="step">
+          <span class="step-num">5</span> <strong>Verify</strong>
+          <pre><code>curl https://APP_URL/health
+# Expected: {"status":"ok","lakebase":true}</code></pre>
+        </div>
+
+        <h3>Connecting to MAS</h3>
+        <p>To use this MCP server as a tool in a Databricks Multi-Agent Supervisor:</p>
+        <ol>
+          <li><strong>Create a UC HTTP Connection:</strong>
+            <ul>
+              <li>URL: <code>https://APP_URL/mcp</code></li>
+              <li>Auth: Databricks OAuth M2M (create SP OAuth secret at Account Console level)</li>
+              <li>Connection fields: host, port=443, base_path=/mcp/, client_id, client_secret, oauth_scope=all-apis</li>
+            </ul>
+          </li>
+          <li><strong>Add External MCP Server agent to MAS:</strong>
+            <ul>
+              <li>Type: External MCP Server</li>
+              <li>Connection: the UC HTTP connection above</li>
+              <li>Description: "Execute Lakebase database operations — CRUD on operational tables"</li>
+            </ul>
+          </li>
+          <li><strong>Rediscover tools:</strong> Open the MAS config page and click "Rediscover tools" to detect the 6 MCP tools.</li>
+        </ol>
+
+        <h3>Using with Claude Code</h3>
+        <p>You can also connect this MCP server to Claude Code for direct database access:</p>
+        <pre><code># In ~/.vibe/marketplace/mcp-servers.yaml or CLAUDE.md MCP config:
+# Use the Databricks MCP server with lakebase tools
+# The MCP endpoint is at: https://APP_URL/mcp/</code></pre>
+
+        <h3>REST API (for custom integrations)</h3>
+        <p>This server also exposes REST endpoints for direct integration:</p>
+        <table>
+          <thead><tr><th>Endpoint</th><th>Method</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td><code>/api/info</code></td><td>GET</td><td>Server info and connection status</td></tr>
+            <tr><td><code>/api/tools</code></td><td>GET</td><td>List MCP tools with schemas</td></tr>
+            <tr><td><code>/api/tables</code></td><td>GET</td><td>List tables with row/column counts</td></tr>
+            <tr><td><code>/api/tables/{name}</code></td><td>GET</td><td>Describe table schema</td></tr>
+            <tr><td><code>/api/tables/{name}/sample</code></td><td>GET</td><td>Sample rows (?limit=20)</td></tr>
+            <tr><td><code>/api/query</code></td><td>POST</td><td>Execute SELECT query (body: {"sql": "..."})</td></tr>
+            <tr><td><code>/api/insert</code></td><td>POST</td><td>Insert record</td></tr>
+            <tr><td><code>/api/update</code></td><td>PATCH</td><td>Update records</td></tr>
+            <tr><td><code>/api/delete</code></td><td>DELETE</td><td>Delete records</td></tr>
+            <tr><td><code>/health</code></td><td>GET</td><td>Health check</td></tr>
+          </tbody>
+        </table>
+
+        <h3>Known Gotchas</h3>
+        <ul>
+          <li><strong>Trailing slash:</strong> MCP endpoint is at <code>/mcp/</code> (with trailing slash). Starlette redirects <code>/mcp</code> to <code>/mcp/</code> automatically.</li>
+          <li><strong>MAS sends JSON strings:</strong> MAS agents may serialize nested objects as JSON strings. The server handles this with <code>_ensure_dict()</code>.</li>
+          <li><strong>Table permissions:</strong> Tables created via <code>databricks psql</code> are owned by the user, not the app SP. Grant permissions after creating tables.</li>
+          <li><strong>OAuth M2M for UC connection:</strong> SP OAuth secrets must be created at the Account Console level, not via workspace API.</li>
+          <li><strong>CAN_USE for users group:</strong> The MAS MCP proxy needs <code>CAN_USE</code> on the app. Grant to <code>users</code> group.</li>
+        </ul>
+
+        <h3>Reuse Across Demos</h3>
+        <p>This server is fully generic. Change only the <code>instance_name</code> and <code>database_name</code> in <code>app.yaml</code> to point to any Lakebase database. No code changes needed.</p>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ── State ───────────────────────────────────────────────────────────
+let currentTable = null;
+let toolsData = [];
+let tablesData = [];
+
+// ── API helpers ─────────────────────────────────────────────────────
+async function api(path, opts = {}) {
+  const resp = await fetch(path, {
+    headers: { 'Content-Type': 'application/json' },
+    ...opts,
+  });
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+  return data;
+}
+
+function escapeHtml(str) {
+  const d = document.createElement('div');
+  d.appendChild(document.createTextNode(String(str ?? '')));
+  return d.innerHTML;
+}
+
+// ── Navigation ──────────────────────────────────────────────────────
+document.querySelectorAll('nav button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('page-' + btn.dataset.page).classList.add('active');
+  });
+});
+
+// ── Init ────────────────────────────────────────────────────────────
+async function init() {
+  try {
+    const info = await api('/api/info');
+    document.getElementById('dbName').textContent = info.database || '--';
+    document.getElementById('statusDot').className = 'dot ' + (info.lakebase_connected ? 'ok' : 'err');
+    document.getElementById('statusText').textContent = info.lakebase_connected ? 'Connected' : 'Disconnected';
+  } catch (e) {
+    document.getElementById('statusDot').className = 'dot err';
+    document.getElementById('statusText').textContent = 'Error';
+  }
+  loadTables();
+  loadTools();
+}
+
+// ── Database Explorer ───────────────────────────────────────────────
+async function loadTables() {
+  const list = document.getElementById('tableList');
+  list.innerHTML = '<li class="empty"><span class="spinner"></span></li>';
+  try {
+    tablesData = await api('/api/tables');
+    if (!tablesData.length) {
+      list.innerHTML = '<li class="empty">No tables found</li>';
+      return;
+    }
+    list.innerHTML = tablesData.map(t => `
+      <li onclick="selectTable('${escapeHtml(t.table_name)}')" data-table="${escapeHtml(t.table_name)}">
+        <span>${escapeHtml(t.table_name)}</span>
+        <span class="count">${t.row_count >= 0 ? t.row_count.toLocaleString() + ' rows' : '--'}</span>
+      </li>
+    `).join('');
+  } catch (e) {
+    list.innerHTML = `<li class="empty" style="color:var(--red)">${escapeHtml(e.message)}</li>`;
+  }
+}
+
+async function selectTable(name) {
+  currentTable = name;
+  // Update active state
+  document.querySelectorAll('.table-list li').forEach(li => {
+    li.classList.toggle('active', li.dataset.table === name);
+  });
+  document.getElementById('explorerEmpty').style.display = 'none';
+  document.getElementById('tableDetailCard').style.display = '';
+  document.getElementById('sampleCard').style.display = 'none';
+  document.getElementById('tableDetailName').textContent = name;
+
+  try {
+    const detail = await api(`/api/tables/${encodeURIComponent(name)}`);
+    const tbody = document.querySelector('#columnsTable tbody');
+    tbody.innerHTML = detail.columns.map(c => `
+      <tr>
+        <td><strong>${escapeHtml(c.column_name)}</strong></td>
+        <td><span class="badge badge-type">${escapeHtml(c.data_type)}</span></td>
+        <td>${c.is_nullable === 'YES' ? '<span class="badge badge-null">nullable</span>' : 'NOT NULL'}</td>
+        <td style="font-family:monospace;font-size:11px;color:var(--text2)">${c.column_default ? escapeHtml(c.column_default) : '--'}</td>
+        <td>${c.is_primary_key ? '<span class="badge badge-pk">PK</span>' : ''}</td>
+      </tr>
+    `).join('');
+  } catch (e) {
+    document.querySelector('#columnsTable tbody').innerHTML = `<tr><td colspan="5" style="color:var(--red)">${escapeHtml(e.message)}</td></tr>`;
+  }
+}
+
+async function loadSample() {
+  if (!currentTable) return;
+  const card = document.getElementById('sampleCard');
+  const wrap = document.getElementById('sampleWrap');
+  card.style.display = '';
+  wrap.innerHTML = '<div class="empty"><span class="spinner"></span></div>';
+  try {
+    const rows = await api(`/api/tables/${encodeURIComponent(currentTable)}/sample?limit=20`);
+    document.getElementById('sampleCount').textContent = `${rows.length} rows`;
+    if (!rows.length) { wrap.innerHTML = '<div class="empty">No data</div>'; return; }
+    const cols = Object.keys(rows[0]);
+    wrap.innerHTML = `<table>
+      <thead><tr>${cols.map(c => `<th>${escapeHtml(c)}</th>`).join('')}</tr></thead>
+      <tbody>${rows.map(r => `<tr>${cols.map(c => {
+        let v = r[c];
+        if (v && typeof v === 'object') v = JSON.stringify(v);
+        const display = v === null ? '<span style="color:var(--text2)">null</span>' : escapeHtml(String(v).substring(0, 100));
+        return `<td>${display}</td>`;
+      }).join('')}</tr>`).join('')}</tbody>
+    </table>`;
+  } catch (e) {
+    wrap.innerHTML = `<div class="empty" style="color:var(--red)">${escapeHtml(e.message)}</div>`;
+  }
+}
+
+// ── SQL Query ───────────────────────────────────────────────────────
+async function runQuery() {
+  const sql = document.getElementById('sqlInput').value.trim();
+  if (!sql) return;
+  const status = document.getElementById('queryStatus');
+  const resultDiv = document.getElementById('queryResult');
+  status.textContent = 'Running...';
+  resultDiv.innerHTML = '';
+  const start = Date.now();
+  try {
+    const rows = await api('/api/query', {
+      method: 'POST',
+      body: JSON.stringify({ sql }),
+    });
+    const elapsed = Date.now() - start;
+    if (typeof rows === 'string') {
+      resultDiv.innerHTML = `<div class="result error">${escapeHtml(rows)}</div>`;
+      status.textContent = '';
+      return;
+    }
+    status.textContent = `${rows.length} rows in ${elapsed}ms`;
+    if (!rows.length) { resultDiv.innerHTML = '<div class="result">No results</div>'; return; }
+    const cols = Object.keys(rows[0]);
+    resultDiv.innerHTML = `<div class="table-wrap" style="margin-top:12px"><table>
+      <thead><tr>${cols.map(c => `<th>${escapeHtml(c)}</th>`).join('')}</tr></thead>
+      <tbody>${rows.map(r => `<tr>${cols.map(c => {
+        let v = r[c];
+        if (v && typeof v === 'object') v = JSON.stringify(v);
+        const display = v === null ? '<span style="color:var(--text2)">null</span>' : escapeHtml(String(v).substring(0, 200));
+        return `<td>${display}</td>`;
+      }).join('')}</tr>`).join('')}</tbody>
+    </table></div>`;
+  } catch (e) {
+    status.textContent = '';
+    resultDiv.innerHTML = `<div class="result error">${escapeHtml(e.message)}</div>`;
+  }
+}
+
+// Ctrl/Cmd+Enter to run query
+document.getElementById('sqlInput').addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); runQuery(); }
+});
+
+// ── MCP Tools ───────────────────────────────────────────────────────
+async function loadTools() {
+  try {
+    toolsData = await api('/api/tools');
+    const container = document.getElementById('toolsList');
+    container.innerHTML = toolsData.map(t => {
+      const isWrite = ['insert_record', 'update_records', 'delete_records'].includes(t.name);
+      const required = t.inputSchema.required || [];
+      const props = t.inputSchema.properties || {};
+      const params = Object.entries(props).map(([k, v]) => {
+        const req = required.includes(k);
+        let typeStr = v.type || (v.oneOf ? v.oneOf.map(o => o.type).join(' | ') : '?');
+        return `<code>${k}</code>${req ? ' <span style="color:var(--red)">*</span>' : ''} <span style="color:var(--text2)">(${typeStr})</span>`;
+      }).join(', ');
+      return `<div class="tool-card">
+        <h3><span class="badge ${isWrite ? 'badge-write' : 'badge-read'}">${isWrite ? 'WRITE' : 'READ'}</span> ${escapeHtml(t.name)}</h3>
+        <p>${escapeHtml(t.description)}</p>
+        ${params ? `<div style="font-size:12px;margin-bottom:8px">Parameters: ${params}</div>` : ''}
+      </div>`;
+    }).join('');
+
+    // Populate playground select
+    const select = document.getElementById('playTool');
+    select.innerHTML = '<option value="">Select a tool...</option>' +
+      toolsData.map(t => `<option value="${t.name}">${t.name}</option>`).join('');
+  } catch (e) {
+    document.getElementById('toolsList').innerHTML = `<div class="empty" style="color:var(--red)">${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function updatePlayForm() {
+  const name = document.getElementById('playTool').value;
+  const container = document.getElementById('playParams');
+  const btn = document.getElementById('playRunBtn');
+  document.getElementById('playResult').innerHTML = '';
+
+  if (!name) { container.innerHTML = ''; btn.disabled = true; return; }
+  btn.disabled = false;
+
+  const tool = toolsData.find(t => t.name === name);
+  if (!tool) return;
+
+  const props = tool.inputSchema.properties || {};
+  const required = tool.inputSchema.required || [];
+
+  container.innerHTML = Object.entries(props).map(([k, v]) => {
+    const req = required.includes(k);
+    const isObj = v.type === 'object' || (v.oneOf && v.oneOf.some(o => o.type === 'object'));
+    return `<div class="form-group">
+      <label>${k}${req ? ' *' : ''} <span style="font-weight:normal;color:var(--text2)">${v.description || ''}</span></label>
+      ${isObj
+        ? `<textarea id="play-${k}" placeholder='{"key": "value"}'></textarea>`
+        : `<input id="play-${k}" type="text" placeholder="${escapeHtml(v.description || k)}">`
+      }
+    </div>`;
+  }).join('');
+}
+
+async function runPlayTool() {
+  const name = document.getElementById('playTool').value;
+  if (!name) return;
+  const tool = toolsData.find(t => t.name === name);
+  const props = tool.inputSchema.properties || {};
+  const resultDiv = document.getElementById('playResult');
+
+  // Build arguments
+  const args = {};
+  for (const k of Object.keys(props)) {
+    const el = document.getElementById('play-' + k);
+    if (!el) continue;
+    let val = el.value.trim();
+    if (!val) continue;
+    // Try parse as JSON for object types
+    const isObj = props[k].type === 'object' || (props[k].oneOf && props[k].oneOf.some(o => o.type === 'object'));
+    if (isObj) {
+      try { val = JSON.parse(val); } catch (e) { /* keep as string */ }
+    }
+    args[k] = val;
+  }
+
+  resultDiv.innerHTML = '<div class="result"><span class="spinner"></span> Running...</div>';
+
+  try {
+    let resp;
+    if (name === 'list_tables') {
+      resp = await api('/api/tables');
+    } else if (name === 'describe_table') {
+      resp = await api(`/api/tables/${encodeURIComponent(args.table_name)}`);
+    } else if (name === 'read_query') {
+      resp = await api('/api/query', { method: 'POST', body: JSON.stringify({ sql: args.sql }) });
+    } else if (name === 'insert_record') {
+      resp = await api('/api/insert', { method: 'POST', body: JSON.stringify(args) });
+    } else if (name === 'update_records') {
+      resp = await api('/api/update', { method: 'PATCH', body: JSON.stringify(args) });
+    } else if (name === 'delete_records') {
+      resp = await api('/api/delete', { method: 'DELETE', body: JSON.stringify(args) });
+    }
+    resultDiv.innerHTML = `<div class="result success">${escapeHtml(JSON.stringify(resp, null, 2))}</div>`;
+  } catch (e) {
+    resultDiv.innerHTML = `<div class="result error">${escapeHtml(e.message)}</div>`;
+  }
+}
+
+// ── Start ───────────────────────────────────────────────────────────
+init();
+</script>
+</body>
+</html>

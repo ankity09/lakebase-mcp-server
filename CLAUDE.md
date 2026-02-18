@@ -1,18 +1,26 @@
 # Lakebase MCP Server — Databricks App
 
-Reusable MCP server that exposes Lakebase (PostgreSQL) read/write operations as MCP tools. Deploy as a Databricks App, then connect it to a MAS Supervisor as an External MCP Server agent.
+Reusable MCP server that exposes Lakebase (PostgreSQL) read/write operations as MCP tools. Deploy as a Databricks App, then connect it to a MAS Supervisor as an External MCP Server agent. Includes a web UI for exploring the database and testing tools.
 
 ## Architecture
 
 ```
-MAS Supervisor
-  ├── Genie Space agent (reads Delta Lake)
-  └── Lakebase MCP Server (reads/writes Lakebase) ← THIS APP
-          └── Starlette + MCP SDK (StreamableHTTP)
-              └── psycopg2 → Lakebase PostgreSQL
+AI Agent (MAS / Claude / etc.)
+    |
+    | MCP Protocol (StreamableHTTP)
+    v
+Lakebase MCP Server (Databricks App)
+    |-- /          Web UI (database explorer, SQL query, tool playground, docs)
+    |-- /mcp/      MCP endpoint (StreamableHTTP, stateless)
+    |-- /api/*     REST API (tables, query, insert, update, delete)
+    |-- /health    Health check
+    |
+    | psycopg2 (PostgreSQL wire protocol)
+    v
+Lakebase Instance (PostgreSQL-compatible)
 ```
 
-## Tools (6)
+## MCP Tools (6)
 
 | Tool | Type | Description |
 |------|------|-------------|
@@ -23,6 +31,28 @@ MAS Supervisor
 | `update_records` | WRITE | Update rows (parameterized SET + WHERE) |
 | `delete_records` | WRITE | Delete rows matching WHERE condition |
 
+## REST API (for UI and custom integrations)
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/info` | GET | Server info and connection status |
+| `/api/tools` | GET | List MCP tools with schemas |
+| `/api/tables` | GET | List tables with row/column counts |
+| `/api/tables/{name}` | GET | Describe table schema |
+| `/api/tables/{name}/sample` | GET | Sample rows (?limit=20) |
+| `/api/query` | POST | Execute SELECT query |
+| `/api/insert` | POST | Insert record |
+| `/api/update` | PATCH | Update records |
+| `/api/delete` | DELETE | Delete records |
+
+## Web UI
+
+The root URL (`/`) serves a single-page application with 4 tabs:
+1. **Database Explorer** — Browse tables, view schemas, sample data
+2. **SQL Query** — Execute read-only queries with tabular results
+3. **MCP Tools** — Tool reference + interactive playground to test each tool
+4. **Documentation** — Deployment guide, MAS connection instructions, gotchas
+
 ## Reuse Across Demos
 
 Change the `instance_name` and `database_name` in `app/app.yaml`:
@@ -31,15 +61,17 @@ Change the `instance_name` and `database_name` in `app/app.yaml`:
 resources:
   - name: database
     database:
-      instance_name: smartagri       # ← change per demo
-      database_name: smartagri_db    # ← change per demo
+      instance_name: my-instance      # change per demo
+      database_name: my_database       # change per demo
       permission: CAN_CONNECT_AND_CREATE
 ```
+
+No code changes needed. The UI and tools work with any Lakebase database.
 
 ## Deployment
 
 ### Prerequisites
-- Databricks CLI configured with appropriate profile
+- Databricks CLI configured with workspace profile
 - A Lakebase instance already created
 
 ### Step 1: Create the app
@@ -51,7 +83,7 @@ databricks apps create lakebase-mcp-server --profile=<PROFILE>
 ### Step 2: Sync code to workspace
 
 ```bash
-databricks sync ./app /Workspace/Users/<email>/lakebase-mcp-server/app --profile=<PROFILE>
+databricks sync ./app /Workspace/Users/<email>/lakebase-mcp-server/app --profile=<PROFILE> --watch=false
 ```
 
 ### Step 3: Deploy
@@ -62,60 +94,58 @@ databricks apps deploy lakebase-mcp-server \
   --profile=<PROFILE>
 ```
 
-### Step 4: Add database resource
-
-The database resource in app.yaml should trigger automatic resource provisioning. If not, add it via the Apps UI or PATCH API:
+### Step 4: Grant permissions
 
 ```bash
-databricks api patch /api/2.0/apps/lakebase-mcp-server \
-  --json '{"resources":[{"name":"database","database":{"instance_name":"supply-chain","database_name":"supply_chain_db","permission":"CAN_CONNECT_AND_CREATE"}}]}' \
+# Grant CAN_USE to users group (required for MAS MCP proxy)
+databricks api patch /api/2.0/permissions/apps/lakebase-mcp-server \
+  --json '{"access_control_list":[{"group_name":"users","permission_level":"CAN_USE"}]}' \
   --profile=<PROFILE>
-```
 
-Then authorize the resource in the Databricks UI (App Settings > Resources).
+# Grant Lakebase table access to app SP
+databricks psql my-instance --profile=<PROFILE> -- -d my_database -c "
+GRANT ALL ON ALL TABLES IN SCHEMA public TO \"<app-sp-client-id>\";
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO \"<app-sp-client-id>\";
+"
+```
 
 ### Step 5: Verify
 
 ```bash
-# Health check
 curl https://<app-url>/health
-
-# Test with DatabricksMCPClient
-python -c "
-from databricks.sdk import WorkspaceClient
-w = WorkspaceClient(profile='<PROFILE>')
-# Use the MCP client to list_tools, call list_tables, etc.
-"
+# Expected: {"status":"ok","lakebase":true}
 ```
+
+Visit `https://<app-url>/` for the web UI.
 
 ## Connecting to MAS
 
 1. Create a UC HTTP connection:
    - URL: `https://<mcp-app-url>/mcp`
-   - Auth: Databricks OAuth (automatic)
+   - Auth: Databricks OAuth M2M (SP OAuth secret from Account Console)
+   - Connection fields: host, port=443, base_path=/mcp/, client_id, client_secret, oauth_scope=all-apis
 
 2. In MAS Supervisor config, add agent:
    - Type: **External MCP Server**
    - Connection: the UC HTTP connection above
-   - Description: "Execute Lakebase database operations — create, read, update, and delete records in operational tables"
+   - Description: "Execute Lakebase database operations — CRUD on operational tables"
 
-## Lakebase Table Permissions
+3. Click "Rediscover tools" in MAS config to detect the 6 MCP tools.
 
-Tables created via `databricks psql` are owned by the user, not the app service principal. After creating tables, grant access:
+## Known Gotchas
 
-```sql
--- Get the app SP client ID from: databricks apps get lakebase-mcp-server
-GRANT ALL ON ALL TABLES IN SCHEMA public TO "<app-sp-client-id>";
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO "<app-sp-client-id>";
-```
+1. **Trailing slash:** MCP endpoint is at `/mcp/` (with trailing slash). `/mcp` redirects to `/mcp/`.
+2. **MAS sends JSON strings:** MAS agents serialize nested objects as JSON strings. Handled by `_ensure_dict()`.
+3. **Table permissions:** Tables created via `databricks psql` are owned by the user. Grant to app SP after creating tables.
+4. **OAuth M2M for UC connection:** SP OAuth secrets must be created at Account Console level.
+5. **CAN_USE for users group:** MAS MCP proxy needs CAN_USE on the app. Grant to `users` group.
 
 ## Local Development
 
 ```bash
-# Set env vars (from Lakebase instance details)
 export PGHOST=instance-<uid>.database.cloud.databricks.com
 export PGPORT=5432
-export PGDATABASE=supply_chain_db
+export PGDATABASE=my_database
 export PGUSER=<your-email>
 export PGSSLMODE=require
 
@@ -123,4 +153,4 @@ pip install -r app/requirements.txt
 python app/mcp_server.py
 ```
 
-The server starts on port 8000 (or `DATABRICKS_APP_PORT`). MCP endpoint: `http://localhost:8000/mcp`
+Server starts on port 8000. MCP endpoint: `http://localhost:8000/mcp/`. UI: `http://localhost:8000/`

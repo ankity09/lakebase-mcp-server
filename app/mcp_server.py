@@ -21,10 +21,12 @@ from databricks.sdk import WorkspaceClient
 from mcp.server.lowlevel import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.types import TextContent, Tool
+from pathlib import Path
+
 from starlette.applications import Starlette
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
-from starlette.responses import JSONResponse, RedirectResponse
+from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
 from starlette.routing import Mount, Route
 
 logging.basicConfig(level=logging.INFO)
@@ -516,6 +518,124 @@ def _tool_delete_records(table_name, where):
     ))]
 
 
+# ── REST API endpoints (for frontend UI) ────────────────────────────
+
+_FRONTEND_DIR = Path(__file__).parent / "frontend"
+
+
+async def api_tables(request: Request):
+    """List all tables with row/column counts."""
+    try:
+        result = _tool_list_tables()
+        return JSONResponse(json.loads(result[0].text))
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def api_table_detail(request: Request):
+    """Describe a single table."""
+    table_name = request.path_params["table_name"]
+    try:
+        result = _tool_describe_table(table_name)
+        return JSONResponse(json.loads(result[0].text))
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+async def api_table_sample(request: Request):
+    """Get sample rows from a table."""
+    table_name = request.path_params["table_name"]
+    limit = int(request.query_params.get("limit", "20"))
+    try:
+        _validate_table(table_name)
+        result = _tool_read_query(f'SELECT * FROM "{table_name}" LIMIT {min(limit, 100)}')
+        return JSONResponse(json.loads(result[0].text))
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+async def api_query(request: Request):
+    """Execute a read-only SELECT query."""
+    body = await request.json()
+    sql = body.get("sql", "")
+    try:
+        result = _tool_read_query(sql)
+        data = json.loads(result[0].text)
+        if isinstance(data, str) and data.startswith("Error"):
+            return JSONResponse({"error": data}, status_code=400)
+        return JSONResponse(data)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+async def api_insert(request: Request):
+    """Insert a record."""
+    body = await request.json()
+    try:
+        result = _tool_insert_record(body["table_name"], body["record"])
+        return JSONResponse(json.loads(result[0].text))
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+async def api_update(request: Request):
+    """Update records."""
+    body = await request.json()
+    try:
+        result = _tool_update_records(body["table_name"], body["set_values"], body["where"])
+        return JSONResponse(json.loads(result[0].text))
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+async def api_delete(request: Request):
+    """Delete records."""
+    body = await request.json()
+    try:
+        result = _tool_delete_records(body["table_name"], body["where"])
+        return JSONResponse(json.loads(result[0].text))
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+async def api_tools(request: Request):
+    """List available MCP tools with schemas."""
+    tools_list = []
+    for t in TOOLS:
+        tools_list.append({
+            "name": t.name,
+            "description": t.description,
+            "inputSchema": t.inputSchema,
+        })
+    return JSONResponse(tools_list)
+
+
+async def api_info(request: Request):
+    """Server info: database, instance, connection status."""
+    pg_ok = False
+    try:
+        _execute_read("SELECT 1")
+        pg_ok = True
+    except Exception:
+        pass
+    return JSONResponse({
+        "server": "lakebase-mcp",
+        "mcp_endpoint": "/mcp/",
+        "database": os.environ.get("PGDATABASE", ""),
+        "host": os.environ.get("PGHOST", ""),
+        "lakebase_connected": pg_ok,
+        "tools_count": len(TOOLS),
+    })
+
+
+async def serve_frontend(request: Request):
+    """Serve the frontend HTML."""
+    index_path = _FRONTEND_DIR / "index.html"
+    if index_path.exists():
+        return HTMLResponse(index_path.read_text())
+    return HTMLResponse("<h1>Lakebase MCP Server</h1><p>Frontend not found. Visit <a href='/health'>/health</a> or <a href='/api/tools'>/api/tools</a>.</p>")
+
+
 # ── Starlette app ────────────────────────────────────────────────────
 
 session_manager = StreamableHTTPSessionManager(
@@ -562,6 +682,19 @@ async def mcp_redirect(request: Request):
 
 app = Starlette(
     routes=[
+        # Frontend
+        Route("/", serve_frontend, methods=["GET"]),
+        # REST API
+        Route("/api/info", api_info, methods=["GET"]),
+        Route("/api/tools", api_tools, methods=["GET"]),
+        Route("/api/tables", api_tables, methods=["GET"]),
+        Route("/api/tables/{table_name}", api_table_detail, methods=["GET"]),
+        Route("/api/tables/{table_name}/sample", api_table_sample, methods=["GET"]),
+        Route("/api/query", api_query, methods=["POST"]),
+        Route("/api/insert", api_insert, methods=["POST"]),
+        Route("/api/update", api_update, methods=["PATCH"]),
+        Route("/api/delete", api_delete, methods=["DELETE"]),
+        # Health & MCP
         Route("/health", health, methods=["GET"]),
         Route("/mcp", mcp_redirect, methods=["GET", "POST", "DELETE"]),
         Mount("/mcp", app=handle_mcp),
