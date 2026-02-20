@@ -33,7 +33,8 @@
   .header .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
   .header .dot.ok { background: var(--green); }
   .header .dot.err { background: var(--red); }
-  .header .db-name { color: var(--text2); font-size: 13px; }
+  .db-select { background: var(--surface2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; font-size: 13px; cursor: pointer; max-width: 220px; }
+  .db-select:focus { outline: none; border-color: var(--accent2); }
 
   nav { background: var(--surface); border-bottom: 1px solid var(--border); display: flex; gap: 0; padding: 0 24px; }
   nav button { background: none; border: none; color: var(--text2); padding: 10px 18px; font-size: 14px; cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.2s; }
@@ -134,7 +135,9 @@
 
 <div class="header">
   <h1>Lakebase MCP Server</h1>
-  <span class="db-name" id="dbName">--</span>
+  <select id="dbSelect" class="db-select" onchange="switchDatabase()" title="Switch database">
+    <option value="">Loading...</option>
+  </select>
   <div class="status">
     <span class="dot" id="statusDot"></span>
     <span id="statusText">Connecting...</span>
@@ -206,7 +209,7 @@
       <div class="card-header"><h2>SQL Query</h2></div>
       <div class="card-body">
         <div class="form-group">
-          <label>SELECT query (read-only, max 500 rows)</label>
+          <label>SELECT query (read-only, max 1000 rows)</label>
           <textarea id="sqlInput" rows="4" placeholder="SELECT * FROM my_table LIMIT 10"></textarea>
         </div>
         <div style="display:flex; gap:8px; align-items:center;">
@@ -264,16 +267,45 @@ Lakebase MCP Server (Databricks App)
     v
 Lakebase Instance (PostgreSQL-compatible)</code></pre>
 
-        <h3>MCP Tools (6)</h3>
+        <h3>MCP Tools (16)</h3>
         <table>
           <thead><tr><th>Tool</th><th>Type</th><th>Description</th></tr></thead>
           <tbody>
             <tr><td><code>list_tables</code></td><td><span class="badge badge-read">READ</span></td><td>List all tables with row counts and column counts</td></tr>
             <tr><td><code>describe_table</code></td><td><span class="badge badge-read">READ</span></td><td>Get column names, data types, constraints for a table</td></tr>
-            <tr><td><code>read_query</code></td><td><span class="badge badge-read">READ</span></td><td>Execute a read-only SELECT query (max 500 rows)</td></tr>
+            <tr><td><code>read_query</code></td><td><span class="badge badge-read">READ</span></td><td>Execute a read-only SELECT query (max configurable rows)</td></tr>
             <tr><td><code>insert_record</code></td><td><span class="badge badge-write">WRITE</span></td><td>Insert a single record (parameterized)</td></tr>
             <tr><td><code>update_records</code></td><td><span class="badge badge-write">WRITE</span></td><td>Update rows matching a WHERE condition</td></tr>
             <tr><td><code>delete_records</code></td><td><span class="badge badge-write">WRITE</span></td><td>Delete rows matching a WHERE condition</td></tr>
+            <tr><td><code>execute_sql</code></td><td><span class="badge badge-type">SQL</span></td><td>Execute any SQL with auto-detection (SELECT/INSERT/UPDATE/DELETE/DDL)</td></tr>
+            <tr><td><code>execute_transaction</code></td><td><span class="badge badge-type">SQL</span></td><td>Multi-statement atomic transaction with rollback on error</td></tr>
+            <tr><td><code>explain_query</code></td><td><span class="badge badge-type">SQL</span></td><td>EXPLAIN ANALYZE with JSON output; rollback for writes</td></tr>
+            <tr><td><code>create_table</code></td><td><span class="badge badge-pk">DDL</span></td><td>CREATE TABLE with column definitions, IF NOT EXISTS</td></tr>
+            <tr><td><code>drop_table</code></td><td><span class="badge badge-pk">DDL</span></td><td>DROP TABLE with confirm=true safety gate</td></tr>
+            <tr><td><code>alter_table</code></td><td><span class="badge badge-pk">DDL</span></td><td>Add/drop/rename columns, alter column types</td></tr>
+            <tr><td><code>list_slow_queries</code></td><td><span class="badge badge-null">PERF</span></td><td>Top slow queries from pg_stat_statements</td></tr>
+            <tr><td><code>batch_insert</code></td><td><span class="badge badge-write">WRITE</span></td><td>Multi-row INSERT in one statement, JSONB-aware</td></tr>
+            <tr><td><code>list_schemas</code></td><td><span class="badge badge-read">READ</span></td><td>List all schemas (not just public)</td></tr>
+            <tr><td><code>get_connection_info</code></td><td><span class="badge badge-read">READ</span></td><td>Host, port, database, user (no password)</td></tr>
+          </tbody>
+        </table>
+
+        <h3>MCP Resources (2)</h3>
+        <table>
+          <thead><tr><th>Resource</th><th>URI</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td>All Tables</td><td><code>lakebase://tables</code></td><td>JSON list of all tables with row/column counts</td></tr>
+            <tr><td>Table Schema</td><td><code>lakebase://tables/{name}/schema</code></td><td>Column definitions for a specific table</td></tr>
+          </tbody>
+        </table>
+
+        <h3>MCP Prompts (3)</h3>
+        <table>
+          <thead><tr><th>Prompt</th><th>Arguments</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td><code>explore_database</code></td><td>none</td><td>List tables, describe schemas, suggest and run queries</td></tr>
+            <tr><td><code>design_schema</code></td><td><code>description</code></td><td>Design a database schema for a given description</td></tr>
+            <tr><td><code>optimize_query</code></td><td><code>sql</code></td><td>EXPLAIN ANALYZE + suggest improvements</td></tr>
           </tbody>
         </table>
 
@@ -354,7 +386,7 @@ GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO \"APP_SP_CLIENT_ID\";
               <li>Description: "Execute Lakebase database operations — CRUD on operational tables"</li>
             </ul>
           </li>
-          <li><strong>Rediscover tools:</strong> Open the MAS config page and click "Rediscover tools" to detect the 6 MCP tools.</li>
+          <li><strong>Rediscover tools:</strong> Open the MAS config page and click "Rediscover tools" to detect the 16 MCP tools.</li>
         </ol>
 
         <h3>Using with Claude Code</h3>
@@ -377,6 +409,14 @@ GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO \"APP_SP_CLIENT_ID\";
             <tr><td><code>/api/insert</code></td><td>POST</td><td>Insert record</td></tr>
             <tr><td><code>/api/update</code></td><td>PATCH</td><td>Update records</td></tr>
             <tr><td><code>/api/delete</code></td><td>DELETE</td><td>Delete records</td></tr>
+            <tr><td><code>/api/execute</code></td><td>POST</td><td>Execute any SQL statement</td></tr>
+            <tr><td><code>/api/transaction</code></td><td>POST</td><td>Execute multi-statement transaction</td></tr>
+            <tr><td><code>/api/explain</code></td><td>POST</td><td>EXPLAIN ANALYZE a query</td></tr>
+            <tr><td><code>/api/tables/create</code></td><td>POST</td><td>Create a table</td></tr>
+            <tr><td><code>/api/tables/drop</code></td><td>POST</td><td>Drop a table</td></tr>
+            <tr><td><code>/api/tables/alter</code></td><td>POST</td><td>Alter a table</td></tr>
+            <tr><td><code>/api/databases</code></td><td>GET</td><td>List available databases</td></tr>
+            <tr><td><code>/api/databases/switch</code></td><td>POST</td><td>Switch to a different database</td></tr>
             <tr><td><code>/health</code></td><td>GET</td><td>Health check</td></tr>
           </tbody>
         </table>
@@ -435,7 +475,6 @@ document.querySelectorAll('nav button').forEach(btn => {
 async function init() {
   try {
     const info = await api('/api/info');
-    document.getElementById('dbName').textContent = info.database || '--';
     document.getElementById('statusDot').className = 'dot ' + (info.lakebase_connected ? 'ok' : 'err');
     document.getElementById('statusText').textContent = info.lakebase_connected ? 'Connected' : 'Disconnected';
   } catch (e) {
@@ -444,6 +483,7 @@ async function init() {
   }
   loadTables();
   loadTools();
+  loadDatabases();
 }
 
 // ── Database Explorer ───────────────────────────────────────────────
@@ -569,7 +609,15 @@ async function loadTools() {
     toolsData = await api('/api/tools');
     const container = document.getElementById('toolsList');
     container.innerHTML = toolsData.map(t => {
-      const isWrite = ['insert_record', 'update_records', 'delete_records'].includes(t.name);
+      const writeTools = ['insert_record', 'update_records', 'delete_records', 'batch_insert'];
+      const ddlTools = ['create_table', 'drop_table', 'alter_table'];
+      const sqlTools = ['execute_sql', 'execute_transaction', 'explain_query'];
+      const perfTools = ['list_slow_queries'];
+      let badgeClass = 'badge-read', badgeLabel = 'READ';
+      if (writeTools.includes(t.name)) { badgeClass = 'badge-write'; badgeLabel = 'WRITE'; }
+      else if (ddlTools.includes(t.name)) { badgeClass = 'badge-pk'; badgeLabel = 'DDL'; }
+      else if (sqlTools.includes(t.name)) { badgeClass = 'badge-type'; badgeLabel = 'SQL'; }
+      else if (perfTools.includes(t.name)) { badgeClass = 'badge-null'; badgeLabel = 'PERF'; }
       const required = t.inputSchema.required || [];
       const props = t.inputSchema.properties || {};
       const params = Object.entries(props).map(([k, v]) => {
@@ -578,7 +626,7 @@ async function loadTools() {
         return `<code>${k}</code>${req ? ' <span style="color:var(--red)">*</span>' : ''} <span style="color:var(--text2)">(${typeStr})</span>`;
       }).join(', ');
       return `<div class="tool-card">
-        <h3><span class="badge ${isWrite ? 'badge-write' : 'badge-read'}">${isWrite ? 'WRITE' : 'READ'}</span> ${escapeHtml(t.name)}</h3>
+        <h3><span class="badge ${badgeClass}">${badgeLabel}</span> ${escapeHtml(t.name)}</h3>
         <p>${escapeHtml(t.description)}</p>
         ${params ? `<div style="font-size:12px;margin-bottom:8px">Parameters: ${params}</div>` : ''}
       </div>`;
@@ -611,12 +659,25 @@ function updatePlayForm() {
   container.innerHTML = Object.entries(props).map(([k, v]) => {
     const req = required.includes(k);
     const isObj = v.type === 'object' || (v.oneOf && v.oneOf.some(o => o.type === 'object'));
+    const isArr = v.type === 'array' || (v.oneOf && v.oneOf.some(o => o.type === 'array'));
+    const isBool = v.type === 'boolean';
+    if (isBool) {
+      const def = v.default !== undefined ? v.default : false;
+      return `<div class="form-group">
+        <label>${k}${req ? ' *' : ''} <span style="font-weight:normal;color:var(--text2)">${v.description || ''}</span></label>
+        <select id="play-${k}"><option value="true" ${def ? 'selected' : ''}>true</option><option value="false" ${!def ? 'selected' : ''}>false</option></select>
+      </div>`;
+    }
+    if (isObj || isArr) {
+      const placeholder = isArr ? '[{"key": "value"}]' : '{"key": "value"}';
+      return `<div class="form-group">
+        <label>${k}${req ? ' *' : ''} <span style="font-weight:normal;color:var(--text2)">${v.description || ''}</span></label>
+        <textarea id="play-${k}" placeholder='${placeholder}'></textarea>
+      </div>`;
+    }
     return `<div class="form-group">
       <label>${k}${req ? ' *' : ''} <span style="font-weight:normal;color:var(--text2)">${v.description || ''}</span></label>
-      ${isObj
-        ? `<textarea id="play-${k}" placeholder='{"key": "value"}'></textarea>`
-        : `<input id="play-${k}" type="text" placeholder="${escapeHtml(v.description || k)}">`
-      }
+      <input id="play-${k}" type="text" placeholder="${escapeHtml(v.description || k)}">
     </div>`;
   }).join('');
 }
@@ -635,9 +696,13 @@ async function runPlayTool() {
     if (!el) continue;
     let val = el.value.trim();
     if (!val) continue;
-    // Try parse as JSON for object types
+    const isBool = props[k].type === 'boolean';
     const isObj = props[k].type === 'object' || (props[k].oneOf && props[k].oneOf.some(o => o.type === 'object'));
-    if (isObj) {
+    const isArr = props[k].type === 'array' || (props[k].oneOf && props[k].oneOf.some(o => o.type === 'array'));
+    const isInt = props[k].type === 'integer';
+    if (isBool) { args[k] = val === 'true'; continue; }
+    if (isInt) { args[k] = parseInt(val, 10); continue; }
+    if (isObj || isArr) {
       try { val = JSON.parse(val); } catch (e) { /* keep as string */ }
     }
     args[k] = val;
@@ -645,24 +710,74 @@ async function runPlayTool() {
 
   resultDiv.innerHTML = '<div class="result"><span class="spinner"></span> Running...</div>';
 
+  // Map tool names to REST endpoints
+  const toolRoutes = {
+    list_tables:      () => api('/api/tables'),
+    describe_table:   () => api(`/api/tables/${encodeURIComponent(args.table_name)}`),
+    read_query:       () => api('/api/query', { method: 'POST', body: JSON.stringify({ sql: args.sql }) }),
+    insert_record:    () => api('/api/insert', { method: 'POST', body: JSON.stringify(args) }),
+    update_records:   () => api('/api/update', { method: 'PATCH', body: JSON.stringify(args) }),
+    delete_records:   () => api('/api/delete', { method: 'DELETE', body: JSON.stringify(args) }),
+    execute_sql:      () => api('/api/execute', { method: 'POST', body: JSON.stringify(args) }),
+    execute_transaction: () => api('/api/transaction', { method: 'POST', body: JSON.stringify(args) }),
+    explain_query:    () => api('/api/explain', { method: 'POST', body: JSON.stringify(args) }),
+    create_table:     () => api('/api/tables/create', { method: 'POST', body: JSON.stringify(args) }),
+    drop_table:       () => api('/api/tables/drop', { method: 'POST', body: JSON.stringify(args) }),
+    alter_table:      () => api('/api/tables/alter', { method: 'POST', body: JSON.stringify(args) }),
+    batch_insert:     () => api('/api/insert', { method: 'POST', body: JSON.stringify(args) }),
+    list_schemas:     () => api('/api/execute', { method: 'POST', body: JSON.stringify({ sql: "SELECT schema_name, schema_owner FROM information_schema.schemata ORDER BY schema_name" }) }),
+    get_connection_info: () => api('/api/info'),
+    list_slow_queries:() => api('/api/execute', { method: 'POST', body: JSON.stringify({ sql: "SELECT query, calls, total_exec_time, mean_exec_time, rows FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT " + (args.limit || 10) }) }),
+  };
   try {
-    let resp;
-    if (name === 'list_tables') {
-      resp = await api('/api/tables');
-    } else if (name === 'describe_table') {
-      resp = await api(`/api/tables/${encodeURIComponent(args.table_name)}`);
-    } else if (name === 'read_query') {
-      resp = await api('/api/query', { method: 'POST', body: JSON.stringify({ sql: args.sql }) });
-    } else if (name === 'insert_record') {
-      resp = await api('/api/insert', { method: 'POST', body: JSON.stringify(args) });
-    } else if (name === 'update_records') {
-      resp = await api('/api/update', { method: 'PATCH', body: JSON.stringify(args) });
-    } else if (name === 'delete_records') {
-      resp = await api('/api/delete', { method: 'DELETE', body: JSON.stringify(args) });
-    }
+    const handler = toolRoutes[name];
+    if (!handler) { resultDiv.innerHTML = '<div class="result error">No REST route for this tool</div>'; return; }
+    const resp = await handler();
     resultDiv.innerHTML = `<div class="result success">${escapeHtml(JSON.stringify(resp, null, 2))}</div>`;
   } catch (e) {
     resultDiv.innerHTML = `<div class="result error">${escapeHtml(e.message)}</div>`;
+  }
+}
+
+// ── Database Switcher ────────────────────────────────────────────────
+async function loadDatabases() {
+  const select = document.getElementById('dbSelect');
+  try {
+    const data = await api('/api/databases');
+    select.innerHTML = data.databases.map(db =>
+      `<option value="${escapeHtml(db)}" ${db === data.current ? 'selected' : ''}>${escapeHtml(db)}</option>`
+    ).join('');
+  } catch (e) {
+    // Fallback: show current db from info
+    try {
+      const info = await api('/api/info');
+      select.innerHTML = `<option value="${escapeHtml(info.database)}" selected>${escapeHtml(info.database)}</option>`;
+    } catch (e2) {
+      select.innerHTML = '<option value="">--</option>';
+    }
+  }
+}
+
+async function switchDatabase() {
+  const select = document.getElementById('dbSelect');
+  const newDb = select.value;
+  if (!newDb) return;
+  const statusText = document.getElementById('statusText');
+  statusText.textContent = 'Switching...';
+  try {
+    await api('/api/databases/switch', {
+      method: 'POST',
+      body: JSON.stringify({ database: newDb }),
+    });
+    statusText.textContent = 'Connected';
+    // Refresh everything
+    loadTables();
+    loadTools();
+  } catch (e) {
+    statusText.textContent = 'Switch failed';
+    alert('Failed to switch database: ' + e.message);
+    // Reload to restore state
+    loadDatabases();
   }
 }
 
