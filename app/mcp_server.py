@@ -1,6 +1,6 @@
 """Reusable Lakebase MCP Server — Databricks App.
 
-Exposes 16 MCP tools, 2 resources, and 3 prompts over StreamableHTTP
+Exposes 27 MCP tools, 2 resources, and 3 prompts over StreamableHTTP
 at /mcp.  Supports both provisioned and autoscaling Lakebase instances.
 
 Connection modes (auto-detected):
@@ -14,6 +14,10 @@ Tools:
   SQL:   execute_sql, execute_transaction, explain_query
   DDL:   create_table, drop_table, alter_table
   PERF:  list_slow_queries
+  INFRA: list_projects, describe_project, get_connection_string, list_branches, list_endpoints, get_endpoint_status
+  BRANCH: create_branch, delete_branch
+  SCALE: configure_autoscaling, configure_scale_to_zero
+  QUALITY: profile_table
 """
 
 import contextlib
@@ -65,6 +69,8 @@ _autoscale_endpoint = None     # full endpoint resource name (autoscaling only)
 _token_timestamp = 0.0         # time.time() when current token was generated
 _TOKEN_REFRESH_SECONDS = 50 * 60  # refresh token every 50 min (expires at 60)
 _current_database = None       # override for database switcher (None = use env default)
+_current_instance = None       # override for instance switcher (None = use app.yaml default)
+_current_instance_host = None  # PGHOST override when switching instances
 
 # ── Workspace client ─────────────────────────────────────────────────
 
@@ -172,7 +178,7 @@ def _init_pg_pool():
     dbname_override = _current_database  # database switcher override
 
     if _connection_mode == "provisioned":
-        pg_host = os.environ.get("PGHOST")
+        pg_host = _current_instance_host or os.environ.get("PGHOST")
         pg_port = int(os.environ.get("PGPORT", "5432"))
         pg_db = dbname_override or os.environ.get("PGDATABASE", "")
         pg_user = os.environ.get("PGUSER", "")
@@ -409,6 +415,51 @@ def _ensure_list(val, param_name="value"):
             pass
         raise ValueError(f"{param_name} must be a JSON array, got string: {val[:100]}")
     raise ValueError(f"{param_name} must be a JSON array, got {type(val).__name__}")
+
+
+# ── SDK proto serialization ──────────────────────────────────────────
+
+
+def _serialize_proto(obj):
+    """Convert Databricks SDK proto objects to JSON-serializable dicts."""
+    if obj is None:
+        return None
+    # Try SDK's built-in serialization
+    if hasattr(obj, "as_dict"):
+        return obj.as_dict()
+    if hasattr(obj, "to_dict"):
+        return obj.to_dict()
+    # Manual field extraction fallback
+    if hasattr(obj, "__dict__"):
+        result = {}
+        for k, v in obj.__dict__.items():
+            if k.startswith("_"):
+                continue
+            if hasattr(v, "as_dict") or hasattr(v, "to_dict"):
+                result[k] = _serialize_proto(v)
+            elif isinstance(v, list):
+                result[k] = [_serialize_proto(i) if hasattr(i, "as_dict") or hasattr(i, "to_dict") or hasattr(i, "__dict__") else i for i in v]
+            elif isinstance(v, (str, int, float, bool, type(None))):
+                result[k] = v
+            else:
+                result[k] = str(v)
+        return result
+    return str(obj)
+
+
+def _resolve_project(identifier: str) -> str:
+    """Accept project name or full resource path, return full path."""
+    if identifier.startswith("projects/"):
+        return identifier
+    return f"projects/{identifier}"
+
+
+def _resolve_branch(project: str, branch: str = "production") -> str:
+    """Build branch resource path from project + branch name."""
+    project_path = _resolve_project(project)
+    if branch.startswith(project_path):
+        return branch
+    return f"{project_path}/branches/{branch}"
 
 
 # ── MCP Server ───────────────────────────────────────────────────────
@@ -750,6 +801,203 @@ TOOLS = [
             "required": [],
         },
     ),
+    # ── Infrastructure tools ────────────────────────────────────────
+    Tool(
+        name="list_projects",
+        description="List all Lakebase projects with their status, branch count, and endpoint info.",
+        inputSchema={
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    ),
+    Tool(
+        name="describe_project",
+        description="Get detailed info about a Lakebase project including branches, endpoints, and configuration.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "project": {
+                    "type": "string",
+                    "description": "Project name or full resource path (e.g. 'my-project' or 'projects/my-project').",
+                },
+            },
+            "required": ["project"],
+        },
+    ),
+    Tool(
+        name="get_connection_string",
+        description="Build a psql or psycopg2 connection string for a Lakebase endpoint.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "endpoint": {
+                    "type": "string",
+                    "description": "Endpoint name or full resource path.",
+                },
+                "format": {
+                    "type": "string",
+                    "enum": ["psql", "psycopg2", "jdbc"],
+                    "description": "Connection string format. Default: psql.",
+                    "default": "psql",
+                },
+            },
+            "required": ["endpoint"],
+        },
+    ),
+    Tool(
+        name="list_branches",
+        description="List branches on a Lakebase project with their state and creation time.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "project": {
+                    "type": "string",
+                    "description": "Project name or full resource path.",
+                },
+            },
+            "required": ["project"],
+        },
+    ),
+    Tool(
+        name="list_endpoints",
+        description="List endpoints on a Lakebase branch with their state, host, and compute config.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "project": {
+                    "type": "string",
+                    "description": "Project name or full resource path.",
+                },
+                "branch": {
+                    "type": "string",
+                    "description": "Branch name. Default: production.",
+                    "default": "production",
+                },
+            },
+            "required": ["project"],
+        },
+    ),
+    Tool(
+        name="get_endpoint_status",
+        description="Get the current status, host, and compute configuration of a Lakebase endpoint.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "endpoint": {
+                    "type": "string",
+                    "description": "Full endpoint resource path (e.g. projects/X/branches/Y/endpoints/Z).",
+                },
+            },
+            "required": ["endpoint"],
+        },
+    ),
+    # ── Branch management tools ─────────────────────────────────────
+    Tool(
+        name="create_branch",
+        description="Create a new development or test branch on a Lakebase project.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "project": {
+                    "type": "string",
+                    "description": "Project name or full resource path.",
+                },
+                "branch_id": {
+                    "type": "string",
+                    "description": "Branch ID (slug). e.g. 'dev', 'staging', 'feature-x'.",
+                },
+                "parent_branch": {
+                    "type": "string",
+                    "description": "Parent branch to fork from. Default: production.",
+                    "default": "production",
+                },
+            },
+            "required": ["project", "branch_id"],
+        },
+    ),
+    Tool(
+        name="delete_branch",
+        description="Delete a Lakebase branch. Cannot delete the production branch.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "branch": {
+                    "type": "string",
+                    "description": "Full branch resource path (e.g. projects/X/branches/dev).",
+                },
+                "confirm": {
+                    "type": "boolean",
+                    "description": "Must be true to confirm deletion. Safety measure.",
+                },
+            },
+            "required": ["branch", "confirm"],
+        },
+    ),
+    # ── Autoscaling config tools ────────────────────────────────────
+    Tool(
+        name="configure_autoscaling",
+        description="Configure autoscaling min/max compute units (CU) on a Lakebase endpoint.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "endpoint": {
+                    "type": "string",
+                    "description": "Full endpoint resource path.",
+                },
+                "min_cu": {
+                    "type": "number",
+                    "description": "Minimum compute units (e.g. 0.25).",
+                },
+                "max_cu": {
+                    "type": "number",
+                    "description": "Maximum compute units (e.g. 4).",
+                },
+            },
+            "required": ["endpoint", "min_cu", "max_cu"],
+        },
+    ),
+    Tool(
+        name="configure_scale_to_zero",
+        description="Enable or disable scale-to-zero (suspend) on a Lakebase endpoint with idle timeout.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "endpoint": {
+                    "type": "string",
+                    "description": "Full endpoint resource path.",
+                },
+                "enabled": {
+                    "type": "boolean",
+                    "description": "Enable (true) or disable (false) scale-to-zero.",
+                },
+                "idle_timeout_seconds": {
+                    "type": "integer",
+                    "description": "Seconds of idle time before suspending. Default: 300.",
+                    "default": 300,
+                },
+            },
+            "required": ["endpoint", "enabled"],
+        },
+    ),
+    # ── Data quality tools ──────────────────────────────────────────
+    Tool(
+        name="profile_table",
+        description=(
+            "Generate column-level profiling statistics for a table: "
+            "row count, null counts, distinct counts, min/max, and average for numeric columns."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "table_name": {
+                    "type": "string",
+                    "description": "Name of the table to profile.",
+                },
+            },
+            "required": ["table_name"],
+        },
+    ),
 ]
 
 
@@ -813,6 +1061,48 @@ async def handle_call_tool(name: str, arguments: dict):
             return _tool_list_schemas()
         elif name == "get_connection_info":
             return _tool_get_connection_info()
+        # Infrastructure tools
+        elif name == "list_projects":
+            return _tool_list_projects()
+        elif name == "describe_project":
+            return _tool_describe_project(arguments["project"])
+        elif name == "get_connection_string":
+            return _tool_get_connection_string(
+                arguments["endpoint"], arguments.get("format", "psql")
+            )
+        elif name == "list_branches":
+            return _tool_list_branches(arguments["project"])
+        elif name == "list_endpoints":
+            return _tool_list_endpoints(
+                arguments["project"], arguments.get("branch", "production")
+            )
+        elif name == "get_endpoint_status":
+            return _tool_get_endpoint_status(arguments["endpoint"])
+        # Branch management tools
+        elif name == "create_branch":
+            return _tool_create_branch(
+                arguments["project"],
+                arguments["branch_id"],
+                arguments.get("parent_branch", "production"),
+            )
+        elif name == "delete_branch":
+            return _tool_delete_branch(
+                arguments["branch"], arguments.get("confirm", False)
+            )
+        # Autoscaling config tools
+        elif name == "configure_autoscaling":
+            return _tool_configure_autoscaling(
+                arguments["endpoint"], arguments["min_cu"], arguments["max_cu"]
+            )
+        elif name == "configure_scale_to_zero":
+            return _tool_configure_scale_to_zero(
+                arguments["endpoint"],
+                arguments["enabled"],
+                arguments.get("idle_timeout_seconds", 300),
+            )
+        # Data quality tools
+        elif name == "profile_table":
+            return _tool_profile_table(arguments["table_name"])
         else:
             return [TextContent(type="text", text=f"Unknown tool: {name}")]
     except Exception as e:
@@ -1424,6 +1714,360 @@ def _tool_get_connection_info():
     return [TextContent(type="text", text=json.dumps(info, indent=2))]
 
 
+# ── Tool implementations (Infrastructure) ────────────────────────────
+
+
+def _tool_list_projects():
+    """List all Lakebase instances (provisioned) and projects (autoscaling)."""
+    w = _get_ws()
+    results = []
+
+    # Try provisioned instances via REST API (most reliable across SDK versions)
+    try:
+        resp = w.api_client.do("GET", "/api/2.0/database/instances")
+        instances = resp.get("database_instances", [])
+        for inst in instances:
+            inst["instance_type"] = "provisioned"
+            results.append(inst)
+    except Exception as e:
+        logger.debug("Provisioned instances REST API failed: %s", e)
+        # Fallback: try SDK method
+        try:
+            instances = list(w.database.list_instances())
+            for inst in instances:
+                entry = _serialize_proto(inst)
+                if isinstance(entry, dict):
+                    entry["instance_type"] = "provisioned"
+                    if "state" in entry:
+                        entry["state"] = str(entry["state"]).replace("DatabaseInstanceState.", "")
+                else:
+                    entry = {"raw": str(inst), "instance_type": "provisioned"}
+                results.append(entry)
+        except Exception as e2:
+            logger.debug("Provisioned instances SDK failed: %s", e2)
+
+    # Try autoscaling projects via REST API
+    try:
+        resp = w.api_client.do("GET", "/api/2.0/postgres/projects")
+        projects = resp.get("projects", [])
+        for p in projects:
+            p["instance_type"] = "autoscaling"
+            results.append(p)
+    except Exception as e:
+        logger.debug("Autoscaling projects REST API failed: %s", e)
+        # Fallback: try SDK method
+        try:
+            projects = list(w.postgres.list_projects())
+            for p in projects:
+                entry = _serialize_proto(p)
+                if isinstance(entry, dict):
+                    entry["instance_type"] = "autoscaling"
+                else:
+                    entry = {"raw": str(p), "instance_type": "autoscaling"}
+                results.append(entry)
+        except Exception as e2:
+            logger.debug("Autoscaling projects SDK failed: %s", e2)
+
+    if not results:
+        return [TextContent(type="text", text=json.dumps({
+            "error": "No Lakebase instances or projects found.",
+            "hint": "Ensure the workspace has Lakebase resources and the app SP has permissions.",
+        }, indent=2))]
+
+    return [TextContent(type="text", text=json.dumps(results, indent=2, default=str))]
+
+
+def _tool_describe_project(project: str):
+    """Get detailed info about a project or provisioned instance."""
+    w = _get_ws()
+
+    # Try provisioned instance via REST API
+    try:
+        resp = w.api_client.do("GET", f"/api/2.0/database/instances/{project}")
+        resp["instance_type"] = "provisioned"
+        return [TextContent(type="text", text=json.dumps(resp, indent=2, default=str))]
+    except Exception as e:
+        logger.debug("Provisioned instance REST describe failed for %s: %s", project, e)
+
+    # Try autoscaling project
+    try:
+        project_path = _resolve_project(project)
+        proj = w.postgres.get_project(project_id=project_path)
+        result = _serialize_proto(proj)
+        if isinstance(result, dict):
+            result["instance_type"] = "autoscaling"
+        # Also list branches
+        try:
+            branches = list(w.postgres.list_branches(parent=project_path))
+            result["branches"] = [_serialize_proto(b) for b in branches]
+        except Exception:
+            result["branches"] = []
+        return [TextContent(type="text", text=json.dumps(result, indent=2, default=str))]
+    except (AttributeError, Exception) as e:
+        return [TextContent(type="text", text=json.dumps({"error": str(e)}, indent=2))]
+
+
+def _tool_get_connection_string(endpoint: str, fmt: str = "psql"):
+    """Build a connection string for an endpoint."""
+    try:
+        w = _get_ws()
+        ep = w.postgres.get_endpoint(name=endpoint)
+        if not ep.status or not ep.status.hosts or not ep.status.hosts.host:
+            return [TextContent(type="text", text=json.dumps({
+                "error": f"Endpoint {endpoint} has no host. State: {getattr(ep, 'state', 'unknown')}",
+            }, indent=2))]
+        host = ep.status.hosts.host
+        port = 5432
+        user = "<your-username>"
+        db = "databricks_postgres"
+        if fmt == "psql":
+            conn_str = f"psql 'host={host} port={port} dbname={db} user={user} sslmode=require'"
+        elif fmt == "psycopg2":
+            conn_str = f"psycopg2.connect(host='{host}', port={port}, dbname='{db}', user='{user}', password='<token>', sslmode='require')"
+        elif fmt == "jdbc":
+            conn_str = f"jdbc:postgresql://{host}:{port}/{db}?sslmode=require&user={user}"
+        else:
+            conn_str = f"host={host} port={port} dbname={db} user={user} sslmode=require"
+        return [TextContent(type="text", text=json.dumps({
+            "format": fmt,
+            "connection_string": conn_str,
+            "host": host,
+            "port": port,
+            "endpoint": endpoint,
+        }, indent=2))]
+    except AttributeError:
+        return [TextContent(type="text", text=json.dumps({
+            "error": "w.postgres.get_endpoint() not available.",
+        }, indent=2))]
+    except Exception as e:
+        return [TextContent(type="text", text=json.dumps({"error": str(e)}, indent=2))]
+
+
+def _tool_list_branches(project: str):
+    """List branches on a project."""
+    try:
+        w = _get_ws()
+        project_path = _resolve_project(project)
+        branches = list(w.postgres.list_branches(parent=project_path))
+        result = [_serialize_proto(b) for b in branches]
+        return [TextContent(type="text", text=json.dumps(result, indent=2, default=str))]
+    except AttributeError:
+        return [TextContent(type="text", text=json.dumps({
+            "error": "w.postgres.list_branches() not available.",
+        }, indent=2))]
+    except Exception as e:
+        return [TextContent(type="text", text=json.dumps({"error": str(e)}, indent=2))]
+
+
+def _tool_list_endpoints(project: str, branch: str = "production"):
+    """List endpoints on a branch."""
+    try:
+        w = _get_ws()
+        branch_path = _resolve_branch(project, branch)
+        endpoints = list(w.postgres.list_endpoints(parent=branch_path))
+        result = [_serialize_proto(ep) for ep in endpoints]
+        return [TextContent(type="text", text=json.dumps(result, indent=2, default=str))]
+    except AttributeError:
+        return [TextContent(type="text", text=json.dumps({
+            "error": "w.postgres.list_endpoints() not available.",
+        }, indent=2))]
+    except Exception as e:
+        return [TextContent(type="text", text=json.dumps({"error": str(e)}, indent=2))]
+
+
+def _tool_get_endpoint_status(endpoint: str):
+    """Get endpoint state, host, compute config."""
+    try:
+        w = _get_ws()
+        ep = w.postgres.get_endpoint(name=endpoint)
+        result = _serialize_proto(ep)
+        return [TextContent(type="text", text=json.dumps(result, indent=2, default=str))]
+    except AttributeError:
+        return [TextContent(type="text", text=json.dumps({
+            "error": "w.postgres.get_endpoint() not available.",
+        }, indent=2))]
+    except Exception as e:
+        return [TextContent(type="text", text=json.dumps({"error": str(e)}, indent=2))]
+
+
+# ── Tool implementations (Branch management) ─────────────────────────
+
+
+def _tool_create_branch(project: str, branch_id: str, parent_branch: str = "production"):
+    """Create a new branch."""
+    try:
+        w = _get_ws()
+        parent_path = _resolve_branch(project, parent_branch)
+        from databricks.sdk.service.database import Branch
+        branch = w.postgres.create_branch(
+            parent=_resolve_project(project),
+            branch=Branch(parent_branch=parent_path),
+            branch_id=branch_id,
+        )
+        result = _serialize_proto(branch)
+        return [TextContent(type="text", text=json.dumps(result, indent=2, default=str))]
+    except ImportError:
+        return [TextContent(type="text", text=json.dumps({
+            "error": "Branch class not available in this SDK version.",
+        }, indent=2))]
+    except AttributeError:
+        return [TextContent(type="text", text=json.dumps({
+            "error": "w.postgres.create_branch() not available.",
+        }, indent=2))]
+    except Exception as e:
+        return [TextContent(type="text", text=json.dumps({"error": str(e)}, indent=2))]
+
+
+def _tool_delete_branch(branch: str, confirm: bool = False):
+    """Delete a branch."""
+    if not confirm:
+        return [TextContent(type="text", text="Error: confirm must be true to delete a branch. This is a safety measure.")]
+    if branch.endswith("/production"):
+        return [TextContent(type="text", text="Error: Cannot delete the production branch.")]
+    try:
+        w = _get_ws()
+        w.postgres.delete_branch(name=branch)
+        return [TextContent(type="text", text=json.dumps({
+            "deleted": True,
+            "branch": branch,
+        }, indent=2))]
+    except AttributeError:
+        return [TextContent(type="text", text=json.dumps({
+            "error": "w.postgres.delete_branch() not available.",
+        }, indent=2))]
+    except Exception as e:
+        return [TextContent(type="text", text=json.dumps({"error": str(e)}, indent=2))]
+
+
+# ── Tool implementations (Autoscaling config) ────────────────────────
+
+
+def _tool_configure_autoscaling(endpoint: str, min_cu: float, max_cu: float):
+    """Configure autoscaling min/max CU."""
+    try:
+        w = _get_ws()
+        from databricks.sdk.service.database import Endpoint, EndpointAutoscaling
+        updated = w.postgres.update_endpoint(
+            endpoint=Endpoint(
+                name=endpoint,
+                autoscaling=EndpointAutoscaling(min_cu=min_cu, max_cu=max_cu),
+            ),
+            update_mask="autoscaling.min_cu,autoscaling.max_cu",
+        )
+        result = _serialize_proto(updated)
+        return [TextContent(type="text", text=json.dumps(result, indent=2, default=str))]
+    except ImportError:
+        return [TextContent(type="text", text=json.dumps({
+            "error": "Endpoint/EndpointAutoscaling classes not available in this SDK version.",
+            "hint": "Autoscaling configuration requires the latest Databricks SDK with Lakebase autoscaling support.",
+        }, indent=2))]
+    except AttributeError:
+        return [TextContent(type="text", text=json.dumps({
+            "error": "w.postgres.update_endpoint() not available. This feature requires autoscaling Lakebase.",
+        }, indent=2))]
+    except Exception as e:
+        return [TextContent(type="text", text=json.dumps({"error": str(e)}, indent=2))]
+
+
+def _tool_configure_scale_to_zero(endpoint: str, enabled: bool, idle_timeout_seconds: int = 300):
+    """Enable/disable scale-to-zero with idle timeout."""
+    try:
+        w = _get_ws()
+        from databricks.sdk.service.database import Endpoint, EndpointAutoscaling, ScaleToZero
+        scale_config = ScaleToZero(enabled=enabled, idle_timeout_seconds=idle_timeout_seconds)
+        updated = w.postgres.update_endpoint(
+            endpoint=Endpoint(
+                name=endpoint,
+                autoscaling=EndpointAutoscaling(scale_to_zero=scale_config),
+            ),
+            update_mask="autoscaling.scale_to_zero",
+        )
+        result = _serialize_proto(updated)
+        return [TextContent(type="text", text=json.dumps(result, indent=2, default=str))]
+    except ImportError:
+        return [TextContent(type="text", text=json.dumps({
+            "error": "ScaleToZero class not available in this SDK version.",
+            "hint": "Scale-to-zero configuration requires the latest Databricks SDK.",
+        }, indent=2))]
+    except AttributeError:
+        return [TextContent(type="text", text=json.dumps({
+            "error": "w.postgres.update_endpoint() not available.",
+        }, indent=2))]
+    except Exception as e:
+        return [TextContent(type="text", text=json.dumps({"error": str(e)}, indent=2))]
+
+
+# ── Tool implementations (Data quality) ──────────────────────────────
+
+
+def _tool_profile_table(table_name: str):
+    """Generate column-level profiling statistics."""
+    table_name = _validate_table(table_name)
+
+    # Get columns and types
+    columns = _execute_read(
+        """
+        SELECT column_name, data_type
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = %s
+        ORDER BY ordinal_position
+        """,
+        (table_name,),
+    )
+    if not columns:
+        return [TextContent(type="text", text=json.dumps({"error": f"No columns found for table {table_name}"}, indent=2))]
+
+    # Build profiling query
+    numeric_types = {"integer", "bigint", "smallint", "numeric", "real", "double precision", "decimal"}
+    select_parts = [f'count(*) AS "total_rows"']
+    for col in columns:
+        cn = col["column_name"]
+        safe_cn = cn.replace('"', '""')
+        select_parts.append(f'count("{safe_cn}") AS "{safe_cn}__non_null"')
+        select_parts.append(f'count(DISTINCT "{safe_cn}") AS "{safe_cn}__distinct"')
+        if col["data_type"] in numeric_types:
+            select_parts.append(f'min("{safe_cn}") AS "{safe_cn}__min"')
+            select_parts.append(f'max("{safe_cn}") AS "{safe_cn}__max"')
+            select_parts.append(f'avg("{safe_cn}")::numeric(20,4) AS "{safe_cn}__avg"')
+        else:
+            select_parts.append(f'min("{safe_cn}"::text) AS "{safe_cn}__min"')
+            select_parts.append(f'max("{safe_cn}"::text) AS "{safe_cn}__max"')
+
+    profile_sql = f'SELECT {", ".join(select_parts)} FROM "{table_name}"'
+    raw = _execute_read(profile_sql)
+    if not raw:
+        return [TextContent(type="text", text=json.dumps({"error": "Profile query returned no results"}, indent=2))]
+
+    row = raw[0]
+    total_rows = row["total_rows"]
+
+    # Reshape into per-column stats
+    profile = []
+    for col in columns:
+        cn = col["column_name"]
+        non_null = row.get(f"{cn}__non_null", 0)
+        stats = {
+            "column": cn,
+            "type": col["data_type"],
+            "total_rows": total_rows,
+            "non_null": non_null,
+            "null_count": total_rows - non_null,
+            "null_pct": round((total_rows - non_null) / total_rows * 100, 1) if total_rows > 0 else 0,
+            "distinct": row.get(f"{cn}__distinct", 0),
+            "min": row.get(f"{cn}__min"),
+            "max": row.get(f"{cn}__max"),
+        }
+        if col["data_type"] in numeric_types:
+            stats["avg"] = row.get(f"{cn}__avg")
+        profile.append(stats)
+
+    return [TextContent(type="text", text=json.dumps({
+        "table": table_name,
+        "total_rows": total_rows,
+        "columns": profile,
+    }, indent=2, default=str))]
+
+
 # ── REST API endpoints (for frontend UI) ────────────────────────────
 
 _FRONTEND_DIR = Path(__file__).parent / "frontend"
@@ -1601,8 +2245,15 @@ async def api_databases(request: Request):
             "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname"
         )
         current = _current_database or os.environ.get("PGDATABASE", "") or os.environ.get("LAKEBASE_DATABASE", "")
+        # Determine current instance name
+        instance = _current_instance
+        if not instance:
+            # Try to extract from app.yaml config — fall back to PGHOST
+            pg_host = os.environ.get("PGHOST", "")
+            instance = pg_host.split(".")[0].replace("instance-", "") if pg_host else "unknown"
         return JSONResponse({
             "current": current,
+            "instance": instance,
             "databases": [r["datname"] for r in rows],
         })
     except Exception as e:
@@ -1650,6 +2301,117 @@ async def api_switch_database(request: Request):
         return JSONResponse({"error": f"Failed to switch to '{new_db}': {e}"}, status_code=400)
 
 
+async def api_switch_instance(request: Request):
+    """Switch to a different Lakebase instance. Reconnects the pool to the new instance's host."""
+    global _current_instance, _current_instance_host, _current_database, _pg_pool, _token_timestamp
+    body = await request.json()
+    instance_name = body.get("instance", "").strip()
+    database = body.get("database", "").strip()  # optional, default to first available
+    if not instance_name:
+        return JSONResponse({"error": "instance name is required"}, status_code=400)
+    if not re.match(r'^[a-zA-Z0-9_-]+$', instance_name):
+        return JSONResponse({"error": f"Invalid instance name: {instance_name}"}, status_code=400)
+
+    old_instance = _current_instance
+    old_host = _current_instance_host
+    old_db = _current_database
+    try:
+        w = _get_ws()
+
+        # Look up instance host via REST API
+        resp = w.api_client.do("GET", f"/api/2.0/database/instances/{instance_name}")
+        new_host = resp.get("read_write_dns", "")
+        if not new_host:
+            return JSONResponse({"error": f"Instance '{instance_name}' has no DNS host"}, status_code=400)
+
+        # Generate a credential specifically for this instance
+        import uuid
+        cred_resp = w.api_client.do("POST", "/api/2.0/database/credentials", body={
+            "instance_names": [instance_name],
+            "request_id": str(uuid.uuid4()),
+        })
+        pg_pass = cred_resp.get("token", "")
+        if not pg_pass:
+            return JSONResponse({"error": f"Failed to generate credential for '{instance_name}'"}, status_code=400)
+
+        # Determine user — SP client ID or current user
+        pg_user = os.environ.get("PGUSER", "")
+        if not pg_user:
+            try:
+                pg_user = w.current_user.me().user_name
+            except Exception:
+                pg_user = "postgres"
+
+        # Close existing pool
+        if _pg_pool:
+            try:
+                _pg_pool.closeall()
+            except Exception:
+                pass
+            _pg_pool = None
+
+        _current_instance = instance_name
+        _current_instance_host = new_host
+        _invalidate_table_cache()
+        _token_timestamp = time.time()
+
+        # Connect to 'postgres' first to discover databases
+        target_db = database or "postgres"
+        _pg_pool = psycopg2.pool.ThreadedConnectionPool(
+            minconn=1, maxconn=5,
+            host=new_host, port=5432, dbname=target_db,
+            user=pg_user, password=pg_pass, sslmode="require",
+        )
+        _current_database = target_db
+        logger.info("Connected to instance %s at %s/%s", instance_name, new_host, target_db)
+
+        # Discover databases on this instance
+        dbs = _execute_read("SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname")
+        db_names = [r["datname"] for r in dbs]
+
+        # If no database was specified, switch to the first non-system database
+        if not database:
+            preferred = [d for d in db_names if d not in ("postgres", "template0", "template1", "databricks_postgres")]
+            if not preferred:
+                preferred = [d for d in db_names if d not in ("postgres", "template0", "template1")]
+            final_db = preferred[0] if preferred else db_names[0] if db_names else "postgres"
+            if final_db != target_db:
+                _pg_pool.closeall()
+                _pg_pool = psycopg2.pool.ThreadedConnectionPool(
+                    minconn=1, maxconn=5,
+                    host=new_host, port=5432, dbname=final_db,
+                    user=pg_user, password=pg_pass, sslmode="require",
+                )
+                _current_database = final_db
+                target_db = final_db
+
+        _execute_read("SELECT 1")  # verify
+        logger.info("Switched instance: %s -> %s (db: %s)", old_instance, instance_name, target_db)
+        return JSONResponse({
+            "switched": True,
+            "instance": instance_name,
+            "database": target_db,
+            "databases": db_names,
+            "host": new_host,
+        })
+    except Exception as e:
+        # Roll back
+        _current_instance = old_instance
+        _current_instance_host = old_host
+        _current_database = old_db
+        if _pg_pool:
+            try:
+                _pg_pool.closeall()
+            except Exception:
+                pass
+            _pg_pool = None
+        try:
+            _init_pg_pool()
+        except Exception:
+            pass
+        return JSONResponse({"error": f"Failed to switch to instance '{instance_name}': {e}"}, status_code=400)
+
+
 async def api_info(request: Request):
     """Server info: database, instance, connection status."""
     pg_ok = False
@@ -1672,6 +2434,107 @@ async def api_info(request: Request):
         info["project"] = os.environ.get("LAKEBASE_PROJECT", "")
         info["branch"] = os.environ.get("LAKEBASE_BRANCH", "production")
     return JSONResponse(info)
+
+
+# ── REST API endpoints (infrastructure) ──────────────────────────────
+
+
+async def api_projects(request: Request):
+    """List all Lakebase projects."""
+    try:
+        result = _tool_list_projects()
+        return JSONResponse(json.loads(result[0].text))
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def api_project_detail(request: Request):
+    """Describe a Lakebase project."""
+    project_id = request.path_params["project_id"]
+    try:
+        result = _tool_describe_project(project_id)
+        return JSONResponse(json.loads(result[0].text))
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+async def api_branches(request: Request):
+    """List branches on a project."""
+    project = request.query_params.get("project", "")
+    if not project:
+        return JSONResponse({"error": "project query parameter required"}, status_code=400)
+    try:
+        result = _tool_list_branches(project)
+        return JSONResponse(json.loads(result[0].text))
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+async def api_create_branch(request: Request):
+    """Create a new branch."""
+    body = await request.json()
+    try:
+        result = _tool_create_branch(
+            body["project"], body["branch_id"], body.get("parent_branch", "production")
+        )
+        return JSONResponse(json.loads(result[0].text))
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+async def api_delete_branch(request: Request):
+    """Delete a branch."""
+    branch_name = request.path_params["branch_name"]
+    try:
+        result = _tool_delete_branch(branch_name, confirm=True)
+        return JSONResponse(json.loads(result[0].text))
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+async def api_endpoints(request: Request):
+    """List endpoints on a project/branch."""
+    project = request.query_params.get("project", "")
+    branch = request.query_params.get("branch", "production")
+    if not project:
+        return JSONResponse({"error": "project query parameter required"}, status_code=400)
+    try:
+        result = _tool_list_endpoints(project, branch)
+        return JSONResponse(json.loads(result[0].text))
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+async def api_endpoint_config(request: Request):
+    """Configure autoscaling or scale-to-zero on an endpoint."""
+    endpoint_name = request.path_params["endpoint_name"]
+    body = await request.json()
+    results = {}
+    try:
+        if "min_cu" in body and "max_cu" in body:
+            r = _tool_configure_autoscaling(endpoint_name, body["min_cu"], body["max_cu"])
+            results["autoscaling"] = json.loads(r[0].text)
+        if "scale_to_zero" in body:
+            s2z = body["scale_to_zero"]
+            r = _tool_configure_scale_to_zero(
+                endpoint_name, s2z.get("enabled", False), s2z.get("idle_timeout_seconds", 300)
+            )
+            results["scale_to_zero"] = json.loads(r[0].text)
+        if not results:
+            return JSONResponse({"error": "Provide min_cu+max_cu and/or scale_to_zero config"}, status_code=400)
+        return JSONResponse(results)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+async def api_profile_table(request: Request):
+    """Profile a table."""
+    table_name = request.path_params["table_name"]
+    try:
+        result = _tool_profile_table(table_name)
+        return JSONResponse(json.loads(result[0].text))
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
 
 
 async def serve_frontend(request: Request):
@@ -1735,6 +2598,7 @@ app = Starlette(
         Route("/api/tools", api_tools, methods=["GET"]),
         Route("/api/databases", api_databases, methods=["GET"]),
         Route("/api/databases/switch", api_switch_database, methods=["POST"]),
+        Route("/api/instances/switch", api_switch_instance, methods=["POST"]),
         Route("/api/tables", api_tables, methods=["GET"]),
         Route("/api/tables/create", api_create_table, methods=["POST"]),
         Route("/api/tables/drop", api_drop_table, methods=["POST"]),
@@ -1748,6 +2612,15 @@ app = Starlette(
         Route("/api/execute", api_execute, methods=["POST"]),
         Route("/api/transaction", api_transaction, methods=["POST"]),
         Route("/api/explain", api_explain, methods=["POST"]),
+        # REST API — infrastructure
+        Route("/api/projects", api_projects, methods=["GET"]),
+        Route("/api/projects/{project_id:path}", api_project_detail, methods=["GET"]),
+        Route("/api/branches", api_branches, methods=["GET"]),
+        Route("/api/branches/create", api_create_branch, methods=["POST"]),
+        Route("/api/branches/{branch_name:path}", api_delete_branch, methods=["DELETE"]),
+        Route("/api/endpoints", api_endpoints, methods=["GET"]),
+        Route("/api/endpoints/{endpoint_name:path}/config", api_endpoint_config, methods=["PATCH"]),
+        Route("/api/profile/{table_name}", api_profile_table, methods=["GET"]),
         # Health & MCP
         Route("/health", health, methods=["GET"]),
         Route("/mcp", mcp_redirect, methods=["GET", "POST", "DELETE"]),

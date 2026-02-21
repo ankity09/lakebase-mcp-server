@@ -4,260 +4,1045 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Lakebase MCP Server</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #0f1117;
-    --surface: #1a1d27;
-    --surface2: #22263a;
-    --border: #2d3148;
-    --text: #e1e4ed;
-    --text2: #8b8fa8;
-    --accent: #ff6b35;
-    --accent2: #3b82f6;
-    --green: #22c55e;
-    --red: #ef4444;
-    --yellow: #eab308;
-    --purple: #a855f7;
-    --radius: 8px;
-    --shadow: 0 2px 8px rgba(0,0,0,0.3);
+    /* Neon-inspired dark palette */
+    --bg-deepest: #0A0A0A;
+    --bg-deep: #0D0E12;
+    --bg-surface: #131418;
+    --bg-card: #1A1B20;
+    --bg-hover: #222328;
+
+    --border: #2A2B32;
+    --border-hover: #3A3B42;
+
+    --text-primary: #F0F0F0;
+    --text-secondary: #A0A0A8;
+    --text-muted: #6B6B73;
+
+    /* Neon green accent */
+    --neon-green: #00E599;
+    --neon-green-dim: #00CC88;
+    --neon-green-glow: rgba(0, 229, 153, 0.15);
+    --neon-green-border: rgba(0, 229, 153, 0.3);
+
+    /* Other colors */
+    --blue: #3B82F6;
+    --red: #EF4444;
+    --yellow: #F59E0B;
+    --purple: #A855F7;
+    --cyan: #06B6D4;
+
+    /* Radii */
+    --radius-card: 12px;
+    --radius-btn: 8px;
+
+    /* Shadows */
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.4);
+    --shadow-md: 0 4px 12px rgba(0,0,0,0.5);
+    --glow-green: 0 0 20px rgba(0, 229, 153, 0.2);
+
+    /* Fonts */
+    --sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --mono: 'JetBrains Mono', 'SF Mono', Monaco, 'Cascadia Code', monospace;
+
+    /* Sidebar */
+    --sidebar-width: 220px;
   }
+
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; }
-  a { color: var(--accent2); text-decoration: none; }
+
+  body {
+    font-family: var(--sans);
+    background: var(--bg-deepest);
+    color: var(--text-primary);
+    line-height: 1.6;
+    display: flex;
+    min-height: 100vh;
+  }
+
+  a { color: var(--blue); text-decoration: none; }
   a:hover { text-decoration: underline; }
 
-  /* Layout */
-  .header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 12px 24px; display: flex; align-items: center; gap: 16px; position: sticky; top: 0; z-index: 100; }
-  .header h1 { font-size: 18px; font-weight: 600; color: var(--accent); }
-  .header .status { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: 13px; }
-  .header .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
-  .header .dot.ok { background: var(--green); }
-  .header .dot.err { background: var(--red); }
-  .db-select { background: var(--surface2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; font-size: 13px; cursor: pointer; max-width: 220px; }
-  .db-select:focus { outline: none; border-color: var(--accent2); }
+  /* ── Sidebar ─────────────────────────────────────────────────── */
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: var(--sidebar-width);
+    background: var(--bg-deep);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    z-index: 200;
+    overflow-y: auto;
+  }
 
-  nav { background: var(--surface); border-bottom: 1px solid var(--border); display: flex; gap: 0; padding: 0 24px; }
-  nav button { background: none; border: none; color: var(--text2); padding: 10px 18px; font-size: 14px; cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.2s; }
-  nav button:hover { color: var(--text); }
-  nav button.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .sidebar-header {
+    padding: 20px 16px 12px 16px;
+    border-bottom: 1px solid var(--border);
+  }
 
-  .container { max-width: 1200px; margin: 0 auto; padding: 24px; }
+  .sidebar-brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  .sidebar-brand .brand-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--neon-green);
+    box-shadow: 0 0 8px rgba(0, 229, 153, 0.5);
+    flex-shrink: 0;
+  }
+
+  .sidebar-brand h1 {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text-primary);
+    letter-spacing: -0.3px;
+  }
+
+  .instance-label {
+    font-size: 10px;
+    color: var(--text-muted);
+    font-family: var(--mono);
+    padding: 0 2px 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .sidebar-db-select {
+    width: 100%;
+    background: var(--bg-card);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-btn);
+    padding: 6px 10px;
+    font-size: 12px;
+    font-family: var(--sans);
+    cursor: pointer;
+    transition: border-color 0.2s ease;
+  }
+
+  .sidebar-db-select:focus {
+    outline: none;
+    border-color: var(--neon-green-border);
+  }
+
+  .sidebar-nav {
+    flex: 1;
+    padding: 8px 0;
+  }
+
+  .nav-section-label {
+    padding: 16px 16px 4px 16px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-muted);
+  }
+
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 16px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    cursor: pointer;
+    border-left: 3px solid transparent;
+    transition: all 0.2s ease;
+    user-select: none;
+  }
+
+  .nav-item:hover {
+    color: var(--text-primary);
+    background: var(--bg-hover);
+  }
+
+  .nav-item.active {
+    color: var(--neon-green);
+    border-left-color: var(--neon-green);
+    background: var(--neon-green-glow);
+  }
+
+  .nav-item svg {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    opacity: 0.7;
+  }
+
+  .nav-item.active svg {
+    opacity: 1;
+  }
+
+  .sidebar-footer {
+    padding: 12px 16px;
+    border-top: 1px solid var(--border);
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .sidebar-footer .status-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .sidebar-footer .status-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+  }
+
+  .sidebar-footer .status-dot.ok { background: var(--neon-green); box-shadow: 0 0 6px rgba(0,229,153,0.5); }
+  .sidebar-footer .status-dot.err { background: var(--red); }
+
+  /* ── Main Content ────────────────────────────────────────────── */
+  .main {
+    margin-left: var(--sidebar-width);
+    flex: 1;
+    min-height: 100vh;
+    overflow-y: auto;
+  }
+
+  .container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 28px 32px;
+  }
+
   .page { display: none; }
   .page.active { display: block; }
 
-  /* Cards */
-  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 16px; overflow: hidden; }
-  .card-header { padding: 14px 18px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
-  .card-header h2 { font-size: 15px; font-weight: 600; }
-  .card-body { padding: 18px; }
+  .page-title {
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    margin-bottom: 20px;
+    color: var(--text-primary);
+  }
 
-  /* Tables */
-  table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); }
-  th { color: var(--text2); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; background: var(--surface2); position: sticky; top: 0; }
-  td { color: var(--text); }
-  tr:hover td { background: rgba(59, 130, 246, 0.05); }
-  .table-wrap { max-height: 500px; overflow: auto; }
+  .page-subtitle {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-top: -14px;
+    margin-bottom: 20px;
+  }
 
-  /* Buttons */
-  .btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; border: 1px solid transparent; transition: all 0.2s; }
-  .btn-primary { background: var(--accent); color: white; }
-  .btn-primary:hover { background: #e55a28; }
-  .btn-secondary { background: var(--surface2); color: var(--text); border-color: var(--border); }
-  .btn-secondary:hover { background: var(--border); }
-  .btn-sm { padding: 4px 10px; font-size: 12px; }
-  .btn-danger { background: var(--red); color: white; }
+  /* ── Cards ───────────────────────────────────────────────────── */
+  .card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-card);
+    margin-bottom: 20px;
+    overflow: hidden;
+    transition: border-color 0.2s ease;
+  }
 
-  /* Forms */
-  input, textarea, select { background: var(--surface2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; font-size: 13px; font-family: inherit; width: 100%; }
-  input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent2); }
-  textarea { resize: vertical; min-height: 80px; font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace; }
-  label { display: block; font-size: 12px; color: var(--text2); margin-bottom: 4px; font-weight: 500; }
+  .card:hover {
+    border-left: 3px solid var(--neon-green);
+  }
+
+  .card-header {
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .card-header h2 {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .card-body {
+    padding: 18px;
+  }
+
+  /* Card grid for projects / endpoints */
+  .card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 16px;
+  }
+
+  .mini-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-card);
+    padding: 16px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .mini-card:hover {
+    border-color: var(--neon-green-border);
+    background: var(--bg-hover);
+    border-left: 3px solid var(--neon-green);
+  }
+
+  .mini-card h3 {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+
+  .mini-card .meta {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 4px;
+  }
+
+  /* ── Tables ──────────────────────────────────────────────────── */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+
+  th, td {
+    padding: 10px 14px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+
+  th {
+    color: var(--text-muted);
+    font-weight: 600;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    background: var(--bg-surface);
+    position: sticky;
+    top: 0;
+  }
+
+  td {
+    color: var(--text-primary);
+  }
+
+  tr:hover td {
+    background: var(--bg-hover);
+  }
+
+  .table-wrap {
+    max-height: 500px;
+    overflow: auto;
+  }
+
+  /* ── Buttons ─────────────────────────────────────────────────── */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px;
+    border-radius: var(--radius-btn);
+    font-size: 13px;
+    font-weight: 500;
+    font-family: var(--sans);
+    cursor: pointer;
+    border: 1px solid transparent;
+    transition: all 0.2s ease;
+  }
+
+  .btn-primary {
+    background: var(--neon-green);
+    color: var(--bg-deepest);
+    font-weight: 600;
+  }
+
+  .btn-primary:hover {
+    background: var(--neon-green-dim);
+    box-shadow: var(--glow-green);
+  }
+
+  .btn-primary:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    box-shadow: none;
+  }
+
+  .btn-secondary {
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    border-color: var(--border);
+  }
+
+  .btn-secondary:hover {
+    background: var(--bg-hover);
+    border-color: var(--border-hover);
+  }
+
+  .btn-sm { padding: 5px 12px; font-size: 12px; }
+
+  .btn-danger {
+    background: rgba(239, 68, 68, 0.15);
+    color: var(--red);
+    border-color: rgba(239, 68, 68, 0.3);
+  }
+
+  .btn-danger:hover {
+    background: rgba(239, 68, 68, 0.25);
+  }
+
+  /* ── Forms ───────────────────────────────────────────────────── */
+  input, textarea, select {
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-btn);
+    padding: 9px 12px;
+    font-size: 13px;
+    font-family: var(--sans);
+    width: 100%;
+    transition: border-color 0.2s ease;
+  }
+
+  input:focus, textarea:focus, select:focus {
+    outline: none;
+    border-color: var(--neon-green-border);
+    box-shadow: 0 0 0 3px var(--neon-green-glow);
+  }
+
+  textarea {
+    resize: vertical;
+    min-height: 80px;
+    font-family: var(--mono);
+  }
+
+  label {
+    display: block;
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 5px;
+    font-weight: 500;
+  }
+
   .form-group { margin-bottom: 14px; }
   .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .form-row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
 
-  /* Badges */
-  .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; }
-  .badge-read { background: rgba(59,130,246,0.15); color: var(--accent2); }
-  .badge-write { background: rgba(255,107,53,0.15); color: var(--accent); }
+  /* ── Badges ──────────────────────────────────────────────────── */
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+
+  .badge-read { background: rgba(59,130,246,0.15); color: var(--blue); }
+  .badge-write { background: rgba(239,68,68,0.15); color: var(--red); }
+  .badge-sql { background: rgba(0,229,153,0.15); color: var(--neon-green); }
+  .badge-ddl { background: rgba(168,85,247,0.15); color: var(--purple); }
+  .badge-perf { background: rgba(107,107,115,0.2); color: var(--text-secondary); }
+  .badge-infra { background: rgba(6,182,212,0.15); color: var(--cyan); }
+  .badge-branch { background: rgba(168,85,247,0.15); color: var(--purple); }
+  .badge-scale { background: rgba(245,158,11,0.15); color: var(--yellow); }
+  .badge-quality { background: rgba(59,130,246,0.15); color: var(--blue); }
+  .badge-type { background: rgba(0,229,153,0.1); color: var(--neon-green); }
   .badge-pk { background: rgba(168,85,247,0.15); color: var(--purple); }
-  .badge-null { background: rgba(139,143,168,0.15); color: var(--text2); }
-  .badge-type { background: rgba(34,197,94,0.15); color: var(--green); }
+  .badge-null { background: rgba(107,107,115,0.15); color: var(--text-muted); }
 
-  /* Results */
-  .result { background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; margin-top: 12px; font-family: 'SF Mono', Monaco, monospace; font-size: 12px; white-space: pre-wrap; max-height: 400px; overflow: auto; }
+  /* ── Status dots ─────────────────────────────────────────────── */
+  .status-dot-inline {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 6px;
+  }
+
+  .status-dot-inline.active,
+  .status-dot-inline.running { background: var(--neon-green); box-shadow: 0 0 6px rgba(0,229,153,0.5); }
+  .status-dot-inline.suspended { background: var(--yellow); box-shadow: 0 0 6px rgba(245,158,11,0.3); }
+  .status-dot-inline.error { background: var(--red); }
+  .status-dot-inline.unknown { background: var(--text-muted); }
+
+  /* ── Results / Code ──────────────────────────────────────────── */
+  .result {
+    background: var(--bg-deepest);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-btn);
+    padding: 14px;
+    margin-top: 12px;
+    font-family: var(--mono);
+    font-size: 12px;
+    white-space: pre-wrap;
+    max-height: 400px;
+    overflow: auto;
+    color: var(--text-secondary);
+  }
+
   .result.error { border-color: var(--red); color: var(--red); }
-  .result.success { border-color: var(--green); }
+  .result.success { border-color: var(--neon-green-border); }
 
-  /* Table list sidebar */
-  .explorer-layout { display: grid; grid-template-columns: 280px 1fr; gap: 16px; }
+  /* ── Explorer layout ─────────────────────────────────────────── */
+  .explorer-layout {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    gap: 20px;
+  }
+
   .table-list { list-style: none; }
-  .table-list li { padding: 8px 14px; cursor: pointer; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; transition: background 0.15s; }
-  .table-list li:hover { background: var(--surface2); }
-  .table-list li.active { background: var(--accent); background: rgba(255,107,53,0.12); color: var(--accent); }
-  .table-list .count { font-size: 11px; color: var(--text2); }
 
-  /* Docs */
-  .docs h3 { font-size: 16px; margin: 20px 0 10px 0; color: var(--accent); }
+  .table-list li {
+    padding: 9px 14px;
+    cursor: pointer;
+    border-radius: var(--radius-btn);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    transition: all 0.15s ease;
+    font-size: 13px;
+  }
+
+  .table-list li:hover { background: var(--bg-hover); }
+
+  .table-list li.active {
+    background: var(--neon-green-glow);
+    color: var(--neon-green);
+  }
+
+  .table-list .count {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-family: var(--mono);
+  }
+
+  /* ── Tool categories ─────────────────────────────────────────── */
+  .tool-category {
+    margin-bottom: 20px;
+  }
+
+  .tool-category-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 0;
+    cursor: pointer;
+    user-select: none;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 12px;
+  }
+
+  .tool-category-header h3 {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .tool-category-header .arrow {
+    font-size: 10px;
+    color: var(--text-muted);
+    transition: transform 0.2s ease;
+  }
+
+  .tool-category-header .arrow.collapsed {
+    transform: rotate(-90deg);
+  }
+
+  .tool-category-header .count-badge {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-left: auto;
+  }
+
+  .tool-category-body {
+    display: block;
+  }
+
+  .tool-category-body.collapsed {
+    display: none;
+  }
+
+  .tool-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-btn);
+    padding: 14px 16px;
+    margin-bottom: 10px;
+    transition: all 0.2s ease;
+  }
+
+  .tool-card:hover {
+    border-color: var(--border-hover);
+    border-left: 3px solid var(--neon-green);
+  }
+
+  .tool-card h3 {
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .tool-card p {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+    line-height: 1.5;
+  }
+
+  .tool-card .schema {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-muted);
+    background: var(--bg-deepest);
+    padding: 8px 10px;
+    border-radius: 6px;
+  }
+
+  /* ── Docs ────────────────────────────────────────────────────── */
+  .docs h3 {
+    font-size: 16px;
+    margin: 24px 0 10px 0;
+    color: var(--neon-green);
+    font-weight: 600;
+  }
+
   .docs h3:first-child { margin-top: 0; }
-  .docs p { margin-bottom: 10px; color: var(--text2); }
-  .docs code { background: var(--surface2); padding: 2px 6px; border-radius: 4px; font-size: 12px; color: var(--green); }
-  .docs pre { background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; margin: 10px 0; overflow-x: auto; font-size: 12px; line-height: 1.5; }
+  .docs p { margin-bottom: 10px; color: var(--text-secondary); font-size: 13px; line-height: 1.7; }
+
+  .docs code {
+    background: var(--bg-deepest);
+    padding: 2px 7px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-family: var(--mono);
+    color: var(--neon-green);
+  }
+
+  .docs pre {
+    background: var(--bg-deepest);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-btn);
+    padding: 14px;
+    margin: 10px 0;
+    overflow-x: auto;
+    font-size: 12px;
+    line-height: 1.5;
+    font-family: var(--mono);
+  }
+
   .docs pre code { background: none; padding: 0; }
-  .docs ul, .docs ol { margin: 8px 0 8px 24px; color: var(--text2); }
+  .docs ul, .docs ol { margin: 8px 0 8px 24px; color: var(--text-secondary); font-size: 13px; }
   .docs li { margin-bottom: 4px; }
-  .docs .step { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin: 12px 0; }
-  .docs .step-num { display: inline-block; width: 24px; height: 24px; background: var(--accent); color: white; border-radius: 50%; text-align: center; line-height: 24px; font-size: 12px; font-weight: 700; margin-right: 8px; }
 
-  /* Tool cards */
-  .tool-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 12px; }
-  .tool-card h3 { font-size: 14px; font-weight: 600; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }
-  .tool-card p { font-size: 13px; color: var(--text2); margin-bottom: 12px; }
-  .tool-card .schema { font-family: monospace; font-size: 12px; color: var(--text2); background: var(--surface2); padding: 10px; border-radius: 6px; }
+  .docs .step {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-card);
+    padding: 16px;
+    margin: 12px 0;
+  }
 
-  /* Loading */
-  .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.6s linear infinite; }
+  .docs .step-num {
+    display: inline-block;
+    width: 24px;
+    height: 24px;
+    background: var(--neon-green);
+    color: var(--bg-deepest);
+    border-radius: 50%;
+    text-align: center;
+    line-height: 24px;
+    font-size: 12px;
+    font-weight: 700;
+    margin-right: 8px;
+  }
+
+  /* ── Profiler bar ────────────────────────────────────────────── */
+  .null-bar {
+    display: inline-block;
+    height: 8px;
+    border-radius: 4px;
+    background: var(--red);
+    opacity: 0.6;
+    min-width: 2px;
+    vertical-align: middle;
+  }
+
+  /* ── Loading / Empty ─────────────────────────────────────────── */
+  .spinner {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    border: 2px solid var(--border);
+    border-top-color: var(--neon-green);
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+  }
+
   @keyframes spin { to { transform: rotate(360deg); } }
 
-  /* Empty state */
-  .empty { text-align: center; padding: 40px; color: var(--text2); }
-  .empty .icon { font-size: 48px; margin-bottom: 12px; }
+  .empty {
+    text-align: center;
+    padding: 40px;
+    color: var(--text-muted);
+  }
 
-  /* Responsive */
-  @media (max-width: 768px) {
+  .empty .icon {
+    font-size: 36px;
+    margin-bottom: 10px;
+    opacity: 0.4;
+  }
+
+  /* ── Toggle switch ───────────────────────────────────────────── */
+  .toggle-wrap {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .toggle {
+    position: relative;
+    width: 38px;
+    height: 20px;
+    cursor: pointer;
+  }
+
+  .toggle input { display: none; }
+
+  .toggle .slider {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: var(--border);
+    border-radius: 10px;
+    transition: background 0.2s ease;
+  }
+
+  .toggle .slider::before {
+    content: '';
+    position: absolute;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--text-primary);
+    top: 2px;
+    left: 2px;
+    transition: transform 0.2s ease;
+  }
+
+  .toggle input:checked + .slider {
+    background: var(--neon-green);
+  }
+
+  .toggle input:checked + .slider::before {
+    transform: translateX(18px);
+  }
+
+  /* ── Responsive ──────────────────────────────────────────────── */
+  @media (max-width: 900px) {
+    .sidebar { width: 60px; }
+    .sidebar-header, .sidebar-footer, .nav-section-label { display: none; }
+    .nav-item span { display: none; }
+    .nav-item { justify-content: center; padding: 12px 0; }
+    .main { margin-left: 60px; }
     .explorer-layout { grid-template-columns: 1fr; }
-    .form-row { grid-template-columns: 1fr; }
-    nav { overflow-x: auto; }
+    .form-row, .form-row-3 { grid-template-columns: 1fr; }
   }
 </style>
 </head>
 <body>
 
-<div class="header">
-  <h1>Lakebase MCP Server</h1>
-  <select id="dbSelect" class="db-select" onchange="switchDatabase()" title="Switch database">
-    <option value="">Loading...</option>
-  </select>
-  <div class="status">
-    <span class="dot" id="statusDot"></span>
-    <span id="statusText">Connecting...</span>
+<!-- ════════════════════ SIDEBAR ════════════════════ -->
+<aside class="sidebar">
+  <div class="sidebar-header">
+    <div class="sidebar-brand">
+      <div class="brand-dot" id="brandDot"></div>
+      <h1>Lakebase MCP</h1>
+    </div>
+    <div id="instanceLabel" class="instance-label" title="Current Lakebase instance"></div>
+    <select id="dbSelect" class="sidebar-db-select" onchange="switchDatabase()" title="Switch database">
+      <option value="">Loading...</option>
+    </select>
   </div>
-</div>
 
-<nav id="mainNav">
-  <button class="active" data-page="explorer">Database Explorer</button>
-  <button data-page="query">SQL Query</button>
-  <button data-page="tools">MCP Tools</button>
-  <button data-page="docs">Documentation</button>
-</nav>
+  <nav class="sidebar-nav">
+    <div class="nav-section-label">Database</div>
+    <div class="nav-item active" data-page="explorer">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+      <span>Explorer</span>
+    </div>
+    <div class="nav-item" data-page="query">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+      <span>SQL Query</span>
+    </div>
+    <div class="nav-item" data-page="tools">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+      <span>MCP Tools</span>
+    </div>
 
-<div class="container">
+    <div class="nav-section-label">Infrastructure</div>
+    <div class="nav-item" data-page="projects">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+      <span>Projects</span>
+    </div>
+    <div class="nav-item" data-page="branches">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+      <span>Branches</span>
+    </div>
+    <div class="nav-item" data-page="endpoints">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+      <span>Endpoints</span>
+    </div>
 
-  <!-- ═══════ DATABASE EXPLORER ═══════ -->
-  <div id="page-explorer" class="page active">
-    <div class="explorer-layout">
-      <div class="card">
-        <div class="card-header">
-          <h2>Tables</h2>
-          <button class="btn btn-sm btn-secondary" onclick="loadTables()">Refresh</button>
-        </div>
-        <div class="card-body" style="padding: 8px;">
-          <ul class="table-list" id="tableList">
-            <li class="empty"><span class="spinner"></span></li>
-          </ul>
-        </div>
-      </div>
-      <div>
-        <div class="card" id="tableDetailCard" style="display:none">
+    <div class="nav-section-label">Quality</div>
+    <div class="nav-item" data-page="profiler">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg>
+      <span>Profiler</span>
+    </div>
+
+    <div class="nav-section-label" style="margin-top: auto;"></div>
+    <div class="nav-item" data-page="docs">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+      <span>Docs</span>
+    </div>
+  </nav>
+
+  <div class="sidebar-footer">
+    <div class="status-row">
+      <span class="status-dot" id="statusDot"></span>
+      <span id="statusText">Connecting...</span>
+    </div>
+  </div>
+</aside>
+
+<!-- ════════════════════ MAIN CONTENT ════════════════════ -->
+<div class="main">
+  <div class="container">
+
+    <!-- ═══════ DATABASE EXPLORER ═══════ -->
+    <div id="page-explorer" class="page active">
+      <h1 class="page-title">Database Explorer</h1>
+      <div class="explorer-layout">
+        <div class="card">
           <div class="card-header">
-            <h2 id="tableDetailName">--</h2>
-            <div>
+            <h2>Tables</h2>
+            <button class="btn btn-sm btn-secondary" onclick="loadTables()">Refresh</button>
+          </div>
+          <div class="card-body" style="padding: 8px;">
+            <ul class="table-list" id="tableList">
+              <li class="empty"><span class="spinner"></span></li>
+            </ul>
+          </div>
+        </div>
+        <div>
+          <div class="card" id="tableDetailCard" style="display:none">
+            <div class="card-header">
+              <h2 id="tableDetailName">--</h2>
               <button class="btn btn-sm btn-secondary" onclick="loadSample()">View Data</button>
             </div>
+            <div class="card-body">
+              <div class="table-wrap">
+                <table id="columnsTable">
+                  <thead><tr><th>Column</th><th>Type</th><th>Nullable</th><th>Default</th><th>Key</th></tr></thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+            </div>
           </div>
-          <div class="card-body">
-            <div class="table-wrap">
-              <table id="columnsTable">
-                <thead><tr><th>Column</th><th>Type</th><th>Nullable</th><th>Default</th><th>Key</th></tr></thead>
-                <tbody></tbody>
-              </table>
+          <div class="card" id="sampleCard" style="display:none">
+            <div class="card-header">
+              <h2>Sample Data</h2>
+              <span id="sampleCount" style="font-size:12px; color: var(--text-secondary)"></span>
+            </div>
+            <div class="card-body">
+              <div class="table-wrap" id="sampleWrap"></div>
+            </div>
+          </div>
+          <div id="explorerEmpty" class="card">
+            <div class="card-body empty">
+              <div class="icon">&#x1F5C4;</div>
+              <p>Select a table to explore its schema and data</p>
             </div>
           </div>
         </div>
-        <div class="card" id="sampleCard" style="display:none">
-          <div class="card-header">
-            <h2>Sample Data</h2>
-            <span id="sampleCount" style="font-size:12px; color: var(--text2)"></span>
+      </div>
+    </div>
+
+    <!-- ═══════ SQL QUERY ═══════ -->
+    <div id="page-query" class="page">
+      <h1 class="page-title">SQL Query</h1>
+      <div class="card">
+        <div class="card-body">
+          <div class="form-group">
+            <label>SELECT query (read-only, max 1000 rows) &mdash; <span style="color:var(--text-muted)">Ctrl+Enter to run</span></label>
+            <textarea id="sqlInput" rows="5" placeholder="SELECT * FROM my_table LIMIT 10" style="font-family: var(--mono); font-size: 13px;"></textarea>
           </div>
-          <div class="card-body">
-            <div class="table-wrap" id="sampleWrap"></div>
+          <div style="display:flex; gap:10px; align-items:center;">
+            <button class="btn btn-primary" onclick="runQuery()">Run Query</button>
+            <span id="queryStatus" style="font-size:12px; color:var(--text-secondary)"></span>
           </div>
-        </div>
-        <div id="explorerEmpty" class="card">
-          <div class="card-body empty">
-            <div class="icon">&#x1f5c4;</div>
-            <p>Select a table to explore its schema and data</p>
-          </div>
+          <div id="queryResult"></div>
         </div>
       </div>
     </div>
-  </div>
 
-  <!-- ═══════ SQL QUERY ═══════ -->
-  <div id="page-query" class="page">
-    <div class="card">
-      <div class="card-header"><h2>SQL Query</h2></div>
-      <div class="card-body">
-        <div class="form-group">
-          <label>SELECT query (read-only, max 1000 rows)</label>
-          <textarea id="sqlInput" rows="4" placeholder="SELECT * FROM my_table LIMIT 10"></textarea>
-        </div>
-        <div style="display:flex; gap:8px; align-items:center;">
-          <button class="btn btn-primary" onclick="runQuery()">Run Query</button>
-          <span id="queryStatus" style="font-size:12px; color:var(--text2)"></span>
-        </div>
-        <div id="queryResult"></div>
-      </div>
-    </div>
-  </div>
+    <!-- ═══════ MCP TOOLS ═══════ -->
+    <div id="page-tools" class="page">
+      <h1 class="page-title">MCP Tools</h1>
+      <p class="page-subtitle">Endpoint: <code style="background:var(--bg-deepest);padding:2px 6px;border-radius:4px;font-family:var(--mono);font-size:12px;color:var(--neon-green)">/mcp/</code></p>
 
-  <!-- ═══════ MCP TOOLS ═══════ -->
-  <div id="page-tools" class="page">
-    <div class="card">
-      <div class="card-header">
-        <h2>Available MCP Tools</h2>
-        <span style="font-size:12px; color:var(--text2)">Endpoint: <code>/mcp/</code></span>
-      </div>
-      <div class="card-body" id="toolsList">
+      <div id="toolsList">
         <div class="empty"><span class="spinner"></span></div>
       </div>
-    </div>
 
-    <div class="card">
-      <div class="card-header"><h2>Tool Playground</h2></div>
-      <div class="card-body">
-        <div class="form-group">
-          <label>Tool</label>
-          <select id="playTool" onchange="updatePlayForm()">
-            <option value="">Select a tool...</option>
-          </select>
+      <div class="card" style="margin-top: 24px;">
+        <div class="card-header"><h2>Tool Playground</h2></div>
+        <div class="card-body">
+          <div class="form-group">
+            <label>Tool</label>
+            <select id="playTool" onchange="updatePlayForm()">
+              <option value="">Select a tool...</option>
+            </select>
+          </div>
+          <div id="playParams"></div>
+          <button class="btn btn-primary" onclick="runPlayTool()" id="playRunBtn" disabled>Execute Tool</button>
+          <div id="playResult"></div>
         </div>
-        <div id="playParams"></div>
-        <button class="btn btn-primary" onclick="runPlayTool()" id="playRunBtn" disabled>Execute Tool</button>
-        <div id="playResult"></div>
       </div>
     </div>
-  </div>
 
-  <!-- ═══════ DOCUMENTATION ═══════ -->
-  <div id="page-docs" class="page">
-    <div class="card">
-      <div class="card-body docs">
-        <h3>Overview</h3>
-        <p>The Lakebase MCP Server is a reusable <a href="https://modelcontextprotocol.io" target="_blank">Model Context Protocol</a> (MCP) server that exposes <a href="https://docs.databricks.com/en/database/lakebase/index.html" target="_blank">Databricks Lakebase</a> (PostgreSQL-compatible) read/write operations as tools for AI agents. Deploy it as a Databricks App, then connect it to a Multi-Agent Supervisor (MAS) as an External MCP Server agent.</p>
+    <!-- ═══════ PROJECTS ═══════ -->
+    <div id="page-projects" class="page">
+      <h1 class="page-title">Projects</h1>
+      <p class="page-subtitle">Lakebase instances (provisioned and autoscaling) in this workspace.</p>
+      <div id="projectsList">
+        <div class="empty"><span class="spinner"></span> Loading projects...</div>
+      </div>
+    </div>
 
-        <h3>Architecture</h3>
-        <pre><code>AI Agent (MAS / Claude / etc.)
+    <!-- ═══════ BRANCHES ═══════ -->
+    <div id="page-branches" class="page">
+      <h1 class="page-title">Branches</h1>
+      <p class="page-subtitle">Manage database branches for development and testing.</p>
+
+      <div class="card">
+        <div class="card-header">
+          <h2>Branch List</h2>
+          <button class="btn btn-sm btn-primary" onclick="showCreateBranch()">Create Branch</button>
+        </div>
+        <div class="card-body">
+          <div class="form-group" style="max-width:320px; margin-bottom:16px;">
+            <label>Project</label>
+            <select id="branchProjectSelect" onchange="loadBranches(this.value)">
+              <option value="">Select project...</option>
+            </select>
+          </div>
+          <div id="branchesList">
+            <div class="empty">Select a project to view branches</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" id="createBranchCard" style="display:none;">
+        <div class="card-header"><h2>Create Branch</h2></div>
+        <div class="card-body">
+          <div class="form-row-3">
+            <div class="form-group">
+              <label>Project</label>
+              <input id="newBranchProject" type="text" placeholder="Project name">
+            </div>
+            <div class="form-group">
+              <label>Branch ID</label>
+              <input id="newBranchId" type="text" placeholder="e.g. dev-feature-x">
+            </div>
+            <div class="form-group">
+              <label>Parent Branch</label>
+              <input id="newBranchParent" type="text" placeholder="production" value="production">
+            </div>
+          </div>
+          <div style="display:flex; gap:8px;">
+            <button class="btn btn-primary" onclick="createBranch()">Create</button>
+            <button class="btn btn-secondary" onclick="document.getElementById('createBranchCard').style.display='none'">Cancel</button>
+          </div>
+          <div id="createBranchResult"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════ ENDPOINTS ═══════ -->
+    <div id="page-endpoints" class="page">
+      <h1 class="page-title">Endpoints</h1>
+      <p class="page-subtitle">Compute endpoints and autoscaling configuration.</p>
+
+      <div class="card">
+        <div class="card-body">
+          <div class="form-row" style="max-width:640px; margin-bottom:16px;">
+            <div class="form-group">
+              <label>Project</label>
+              <select id="endpointProjectSelect" onchange="loadEndpoints(this.value, document.getElementById('endpointBranchSelect').value)">
+                <option value="">Select project...</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Branch</label>
+              <select id="endpointBranchSelect" onchange="loadEndpoints(document.getElementById('endpointProjectSelect').value, this.value)">
+                <option value="">All branches</option>
+              </select>
+            </div>
+          </div>
+          <div id="endpointsList">
+            <div class="empty">Select a project to view endpoints</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════ PROFILER ═══════ -->
+    <div id="page-profiler" class="page">
+      <h1 class="page-title">Data Profiler</h1>
+      <p class="page-subtitle">Statistical profiling of table columns: types, nullability, distinct values, and ranges.</p>
+
+      <div class="card">
+        <div class="card-body">
+          <div class="form-row" style="max-width: 500px;">
+            <div class="form-group">
+              <label>Table</label>
+              <select id="profilerTableSelect" onchange="profileTable(this.value)">
+                <option value="">Select a table...</option>
+              </select>
+            </div>
+            <div class="form-group" style="display:flex; align-items:flex-end;">
+              <button class="btn btn-primary" onclick="profileTable(document.getElementById('profilerTableSelect').value)">Profile</button>
+            </div>
+          </div>
+          <div id="profilerResult">
+            <div class="empty">Select a table above to run profiling</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════ DOCUMENTATION ═══════ -->
+    <div id="page-docs" class="page">
+      <div class="card">
+        <div class="card-body docs">
+          <h3>Overview</h3>
+          <p>The Lakebase MCP Server is a reusable <a href="https://modelcontextprotocol.io" target="_blank">Model Context Protocol</a> (MCP) server that exposes <a href="https://docs.databricks.com/en/database/lakebase/index.html" target="_blank">Databricks Lakebase</a> (PostgreSQL-compatible) read/write operations as tools for AI agents. Deploy it as a Databricks App, then connect it to a Multi-Agent Supervisor (MAS) as an External MCP Server agent.</p>
+
+          <h3>Architecture</h3>
+          <pre><code>AI Agent (MAS / Claude / etc.)
     |
     | MCP Protocol (StreamableHTTP)
     v
@@ -267,61 +1052,72 @@ Lakebase MCP Server (Databricks App)
     v
 Lakebase Instance (PostgreSQL-compatible)</code></pre>
 
-        <h3>MCP Tools (16)</h3>
-        <table>
-          <thead><tr><th>Tool</th><th>Type</th><th>Description</th></tr></thead>
-          <tbody>
-            <tr><td><code>list_tables</code></td><td><span class="badge badge-read">READ</span></td><td>List all tables with row counts and column counts</td></tr>
-            <tr><td><code>describe_table</code></td><td><span class="badge badge-read">READ</span></td><td>Get column names, data types, constraints for a table</td></tr>
-            <tr><td><code>read_query</code></td><td><span class="badge badge-read">READ</span></td><td>Execute a read-only SELECT query (max configurable rows)</td></tr>
-            <tr><td><code>insert_record</code></td><td><span class="badge badge-write">WRITE</span></td><td>Insert a single record (parameterized)</td></tr>
-            <tr><td><code>update_records</code></td><td><span class="badge badge-write">WRITE</span></td><td>Update rows matching a WHERE condition</td></tr>
-            <tr><td><code>delete_records</code></td><td><span class="badge badge-write">WRITE</span></td><td>Delete rows matching a WHERE condition</td></tr>
-            <tr><td><code>execute_sql</code></td><td><span class="badge badge-type">SQL</span></td><td>Execute any SQL with auto-detection (SELECT/INSERT/UPDATE/DELETE/DDL)</td></tr>
-            <tr><td><code>execute_transaction</code></td><td><span class="badge badge-type">SQL</span></td><td>Multi-statement atomic transaction with rollback on error</td></tr>
-            <tr><td><code>explain_query</code></td><td><span class="badge badge-type">SQL</span></td><td>EXPLAIN ANALYZE with JSON output; rollback for writes</td></tr>
-            <tr><td><code>create_table</code></td><td><span class="badge badge-pk">DDL</span></td><td>CREATE TABLE with column definitions, IF NOT EXISTS</td></tr>
-            <tr><td><code>drop_table</code></td><td><span class="badge badge-pk">DDL</span></td><td>DROP TABLE with confirm=true safety gate</td></tr>
-            <tr><td><code>alter_table</code></td><td><span class="badge badge-pk">DDL</span></td><td>Add/drop/rename columns, alter column types</td></tr>
-            <tr><td><code>list_slow_queries</code></td><td><span class="badge badge-null">PERF</span></td><td>Top slow queries from pg_stat_statements</td></tr>
-            <tr><td><code>batch_insert</code></td><td><span class="badge badge-write">WRITE</span></td><td>Multi-row INSERT in one statement, JSONB-aware</td></tr>
-            <tr><td><code>list_schemas</code></td><td><span class="badge badge-read">READ</span></td><td>List all schemas (not just public)</td></tr>
-            <tr><td><code>get_connection_info</code></td><td><span class="badge badge-read">READ</span></td><td>Host, port, database, user (no password)</td></tr>
-          </tbody>
-        </table>
+          <h3>MCP Tools (27)</h3>
+          <table>
+            <thead><tr><th>Tool</th><th>Type</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td><code>list_tables</code></td><td><span class="badge badge-read">READ</span></td><td>List all tables with row counts and column counts</td></tr>
+              <tr><td><code>describe_table</code></td><td><span class="badge badge-read">READ</span></td><td>Get column names, data types, constraints for a table</td></tr>
+              <tr><td><code>read_query</code></td><td><span class="badge badge-read">READ</span></td><td>Execute a read-only SELECT query (max configurable rows)</td></tr>
+              <tr><td><code>list_schemas</code></td><td><span class="badge badge-read">READ</span></td><td>List all schemas (not just public)</td></tr>
+              <tr><td><code>get_connection_info</code></td><td><span class="badge badge-read">READ</span></td><td>Host, port, database, user (no password)</td></tr>
+              <tr><td><code>insert_record</code></td><td><span class="badge badge-write">WRITE</span></td><td>Insert a single record (parameterized)</td></tr>
+              <tr><td><code>update_records</code></td><td><span class="badge badge-write">WRITE</span></td><td>Update rows matching a WHERE condition</td></tr>
+              <tr><td><code>delete_records</code></td><td><span class="badge badge-write">WRITE</span></td><td>Delete rows matching a WHERE condition</td></tr>
+              <tr><td><code>batch_insert</code></td><td><span class="badge badge-write">WRITE</span></td><td>Multi-row INSERT in one statement, JSONB-aware</td></tr>
+              <tr><td><code>execute_sql</code></td><td><span class="badge badge-sql">SQL</span></td><td>Execute any SQL with auto-detection (SELECT/INSERT/UPDATE/DELETE/DDL)</td></tr>
+              <tr><td><code>execute_transaction</code></td><td><span class="badge badge-sql">SQL</span></td><td>Multi-statement atomic transaction with rollback on error</td></tr>
+              <tr><td><code>explain_query</code></td><td><span class="badge badge-sql">SQL</span></td><td>EXPLAIN ANALYZE with JSON output; rollback for writes</td></tr>
+              <tr><td><code>create_table</code></td><td><span class="badge badge-ddl">DDL</span></td><td>CREATE TABLE with column definitions, IF NOT EXISTS</td></tr>
+              <tr><td><code>drop_table</code></td><td><span class="badge badge-ddl">DDL</span></td><td>DROP TABLE with confirm=true safety gate</td></tr>
+              <tr><td><code>alter_table</code></td><td><span class="badge badge-ddl">DDL</span></td><td>Add/drop/rename columns, alter column types</td></tr>
+              <tr><td><code>list_slow_queries</code></td><td><span class="badge badge-perf">PERF</span></td><td>Top slow queries from pg_stat_statements</td></tr>
+              <tr><td><code>list_projects</code></td><td><span class="badge badge-infra">INFRA</span></td><td>List all Lakebase autoscaling projects</td></tr>
+              <tr><td><code>describe_project</code></td><td><span class="badge badge-infra">INFRA</span></td><td>Get details for a specific project</td></tr>
+              <tr><td><code>get_connection_string</code></td><td><span class="badge badge-infra">INFRA</span></td><td>Get the connection string for a project endpoint</td></tr>
+              <tr><td><code>list_branches</code></td><td><span class="badge badge-infra">INFRA</span></td><td>List branches for a project</td></tr>
+              <tr><td><code>list_endpoints</code></td><td><span class="badge badge-infra">INFRA</span></td><td>List compute endpoints for a project/branch</td></tr>
+              <tr><td><code>get_endpoint_status</code></td><td><span class="badge badge-infra">INFRA</span></td><td>Get the status of a specific endpoint</td></tr>
+              <tr><td><code>create_branch</code></td><td><span class="badge badge-branch">BRANCH</span></td><td>Create a new database branch from a parent</td></tr>
+              <tr><td><code>delete_branch</code></td><td><span class="badge badge-branch">BRANCH</span></td><td>Delete a database branch</td></tr>
+              <tr><td><code>configure_autoscaling</code></td><td><span class="badge badge-scale">SCALE</span></td><td>Set min/max compute units for an endpoint</td></tr>
+              <tr><td><code>configure_scale_to_zero</code></td><td><span class="badge badge-scale">SCALE</span></td><td>Enable/disable scale-to-zero and idle timeout</td></tr>
+              <tr><td><code>profile_table</code></td><td><span class="badge badge-quality">QUALITY</span></td><td>Statistical profiling of table columns</td></tr>
+            </tbody>
+          </table>
 
-        <h3>MCP Resources (2)</h3>
-        <table>
-          <thead><tr><th>Resource</th><th>URI</th><th>Description</th></tr></thead>
-          <tbody>
-            <tr><td>All Tables</td><td><code>lakebase://tables</code></td><td>JSON list of all tables with row/column counts</td></tr>
-            <tr><td>Table Schema</td><td><code>lakebase://tables/{name}/schema</code></td><td>Column definitions for a specific table</td></tr>
-          </tbody>
-        </table>
+          <h3>MCP Resources (2)</h3>
+          <table>
+            <thead><tr><th>Resource</th><th>URI</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td>All Tables</td><td><code>lakebase://tables</code></td><td>JSON list of all tables with row/column counts</td></tr>
+              <tr><td>Table Schema</td><td><code>lakebase://tables/{name}/schema</code></td><td>Column definitions for a specific table</td></tr>
+            </tbody>
+          </table>
 
-        <h3>MCP Prompts (3)</h3>
-        <table>
-          <thead><tr><th>Prompt</th><th>Arguments</th><th>Description</th></tr></thead>
-          <tbody>
-            <tr><td><code>explore_database</code></td><td>none</td><td>List tables, describe schemas, suggest and run queries</td></tr>
-            <tr><td><code>design_schema</code></td><td><code>description</code></td><td>Design a database schema for a given description</td></tr>
-            <tr><td><code>optimize_query</code></td><td><code>sql</code></td><td>EXPLAIN ANALYZE + suggest improvements</td></tr>
-          </tbody>
-        </table>
+          <h3>MCP Prompts (3)</h3>
+          <table>
+            <thead><tr><th>Prompt</th><th>Arguments</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td><code>explore_database</code></td><td>none</td><td>List tables, describe schemas, suggest and run queries</td></tr>
+              <tr><td><code>design_schema</code></td><td><code>description</code></td><td>Design a database schema for a given description</td></tr>
+              <tr><td><code>optimize_query</code></td><td><code>sql</code></td><td>EXPLAIN ANALYZE + suggest improvements</td></tr>
+            </tbody>
+          </table>
 
-        <h3>Deployment Guide</h3>
+          <h3>Deployment Guide</h3>
 
-        <div class="step">
-          <span class="step-num">1</span> <strong>Create a Lakebase Instance</strong>
-          <pre><code>databricks lakebase instances create --name my-instance --profile MY_PROFILE
+          <div class="step">
+            <span class="step-num">1</span> <strong>Create a Lakebase Instance</strong>
+            <pre><code>databricks lakebase instances create --name my-instance --profile MY_PROFILE
 # Wait 5-6 minutes for instance to start
 databricks lakebase instances get my-instance --profile MY_PROFILE</code></pre>
-        </div>
+          </div>
 
-        <div class="step">
-          <span class="step-num">2</span> <strong>Configure app.yaml</strong>
-          <p>Update <code>app/app.yaml</code> with your Lakebase instance and database names:</p>
-          <pre><code>command:
+          <div class="step">
+            <span class="step-num">2</span> <strong>Configure app.yaml</strong>
+            <p>Update <code>app/app.yaml</code> with your Lakebase instance and database names:</p>
+            <pre><code>command:
   - python
   - mcp_server.py
 
@@ -331,11 +1127,11 @@ resources:
       instance_name: my-instance      # your Lakebase instance name
       database_name: my_database       # your database name
       permission: CAN_CONNECT_AND_CREATE</code></pre>
-        </div>
+          </div>
 
-        <div class="step">
-          <span class="step-num">3</span> <strong>Create & Deploy the App</strong>
-          <pre><code># Create the app
+          <div class="step">
+            <span class="step-num">3</span> <strong>Create &amp; Deploy the App</strong>
+            <pre><code># Create the app
 databricks apps create lakebase-mcp-server --profile MY_PROFILE
 
 # Sync code to workspace
@@ -346,11 +1142,11 @@ databricks sync ./app /Workspace/Users/EMAIL/lakebase-mcp-server/app \
 databricks apps deploy lakebase-mcp-server \
   --source-code-path /Workspace/Users/EMAIL/lakebase-mcp-server/app \
   --profile MY_PROFILE</code></pre>
-        </div>
+          </div>
 
-        <div class="step">
-          <span class="step-num">4</span> <strong>Grant Permissions</strong>
-          <pre><code># Grant CAN_USE to users group (required for MAS MCP proxy)
+          <div class="step">
+            <span class="step-num">4</span> <strong>Grant Permissions</strong>
+            <pre><code># Grant CAN_USE to users group (required for MAS MCP proxy)
 databricks api patch /api/2.0/permissions/apps/lakebase-mcp-server \
   --json '{"access_control_list":[{"group_name":"users","permission_level":"CAN_USE"}]}' \
   --profile MY_PROFILE
@@ -361,81 +1157,91 @@ databricks psql my-instance --profile MY_PROFILE -- -d my_database -c "
 GRANT ALL ON ALL TABLES IN SCHEMA public TO \"APP_SP_CLIENT_ID\";
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO \"APP_SP_CLIENT_ID\";
 "</code></pre>
-        </div>
+          </div>
 
-        <div class="step">
-          <span class="step-num">5</span> <strong>Verify</strong>
-          <pre><code>curl https://APP_URL/health
+          <div class="step">
+            <span class="step-num">5</span> <strong>Verify</strong>
+            <pre><code>curl https://APP_URL/health
 # Expected: {"status":"ok","lakebase":true}</code></pre>
-        </div>
+          </div>
 
-        <h3>Connecting to MAS</h3>
-        <p>To use this MCP server as a tool in a Databricks Multi-Agent Supervisor:</p>
-        <ol>
-          <li><strong>Create a UC HTTP Connection:</strong>
-            <ul>
-              <li>URL: <code>https://APP_URL/mcp</code></li>
-              <li>Auth: Databricks OAuth M2M (create SP OAuth secret at Account Console level)</li>
-              <li>Connection fields: host, port=443, base_path=/mcp/, client_id, client_secret, oauth_scope=all-apis</li>
-            </ul>
-          </li>
-          <li><strong>Add External MCP Server agent to MAS:</strong>
-            <ul>
-              <li>Type: External MCP Server</li>
-              <li>Connection: the UC HTTP connection above</li>
-              <li>Description: "Execute Lakebase database operations — CRUD on operational tables"</li>
-            </ul>
-          </li>
-          <li><strong>Rediscover tools:</strong> Open the MAS config page and click "Rediscover tools" to detect the 16 MCP tools.</li>
-        </ol>
+          <h3>Connecting to MAS</h3>
+          <p>To use this MCP server as a tool in a Databricks Multi-Agent Supervisor:</p>
+          <ol>
+            <li><strong>Create a UC HTTP Connection:</strong>
+              <ul>
+                <li>URL: <code>https://APP_URL/mcp</code></li>
+                <li>Auth: Databricks OAuth M2M (create SP OAuth secret at Account Console level)</li>
+                <li>Connection fields: host, port=443, base_path=/mcp/, client_id, client_secret, oauth_scope=all-apis</li>
+              </ul>
+            </li>
+            <li><strong>Add External MCP Server agent to MAS:</strong>
+              <ul>
+                <li>Type: External MCP Server</li>
+                <li>Connection: the UC HTTP connection above</li>
+                <li>Description: "Execute Lakebase database operations &mdash; CRUD on operational tables"</li>
+              </ul>
+            </li>
+            <li><strong>Rediscover tools:</strong> Open the MAS config page and click "Rediscover tools" to detect the 27 MCP tools.</li>
+          </ol>
 
-        <h3>Using with Claude Code</h3>
-        <p>You can also connect this MCP server to Claude Code for direct database access:</p>
-        <pre><code># In ~/.vibe/marketplace/mcp-servers.yaml or CLAUDE.md MCP config:
+          <h3>Using with Claude Code</h3>
+          <p>You can also connect this MCP server to Claude Code for direct database access:</p>
+          <pre><code># In ~/.vibe/marketplace/mcp-servers.yaml or CLAUDE.md MCP config:
 # Use the Databricks MCP server with lakebase tools
 # The MCP endpoint is at: https://APP_URL/mcp/</code></pre>
 
-        <h3>REST API (for custom integrations)</h3>
-        <p>This server also exposes REST endpoints for direct integration:</p>
-        <table>
-          <thead><tr><th>Endpoint</th><th>Method</th><th>Description</th></tr></thead>
-          <tbody>
-            <tr><td><code>/api/info</code></td><td>GET</td><td>Server info and connection status</td></tr>
-            <tr><td><code>/api/tools</code></td><td>GET</td><td>List MCP tools with schemas</td></tr>
-            <tr><td><code>/api/tables</code></td><td>GET</td><td>List tables with row/column counts</td></tr>
-            <tr><td><code>/api/tables/{name}</code></td><td>GET</td><td>Describe table schema</td></tr>
-            <tr><td><code>/api/tables/{name}/sample</code></td><td>GET</td><td>Sample rows (?limit=20)</td></tr>
-            <tr><td><code>/api/query</code></td><td>POST</td><td>Execute SELECT query (body: {"sql": "..."})</td></tr>
-            <tr><td><code>/api/insert</code></td><td>POST</td><td>Insert record</td></tr>
-            <tr><td><code>/api/update</code></td><td>PATCH</td><td>Update records</td></tr>
-            <tr><td><code>/api/delete</code></td><td>DELETE</td><td>Delete records</td></tr>
-            <tr><td><code>/api/execute</code></td><td>POST</td><td>Execute any SQL statement</td></tr>
-            <tr><td><code>/api/transaction</code></td><td>POST</td><td>Execute multi-statement transaction</td></tr>
-            <tr><td><code>/api/explain</code></td><td>POST</td><td>EXPLAIN ANALYZE a query</td></tr>
-            <tr><td><code>/api/tables/create</code></td><td>POST</td><td>Create a table</td></tr>
-            <tr><td><code>/api/tables/drop</code></td><td>POST</td><td>Drop a table</td></tr>
-            <tr><td><code>/api/tables/alter</code></td><td>POST</td><td>Alter a table</td></tr>
-            <tr><td><code>/api/databases</code></td><td>GET</td><td>List available databases</td></tr>
-            <tr><td><code>/api/databases/switch</code></td><td>POST</td><td>Switch to a different database</td></tr>
-            <tr><td><code>/health</code></td><td>GET</td><td>Health check</td></tr>
-          </tbody>
-        </table>
+          <h3>REST API (for custom integrations)</h3>
+          <p>This server exposes REST endpoints for direct integration:</p>
+          <table>
+            <thead><tr><th>Endpoint</th><th>Method</th><th>Description</th></tr></thead>
+            <tbody>
+              <tr><td><code>/api/info</code></td><td>GET</td><td>Server info and connection status</td></tr>
+              <tr><td><code>/api/tools</code></td><td>GET</td><td>List MCP tools with schemas</td></tr>
+              <tr><td><code>/api/tables</code></td><td>GET</td><td>List tables with row/column counts</td></tr>
+              <tr><td><code>/api/tables/{name}</code></td><td>GET</td><td>Describe table schema</td></tr>
+              <tr><td><code>/api/tables/{name}/sample</code></td><td>GET</td><td>Sample rows (?limit=20)</td></tr>
+              <tr><td><code>/api/query</code></td><td>POST</td><td>Execute SELECT query (body: {"sql": "..."})</td></tr>
+              <tr><td><code>/api/insert</code></td><td>POST</td><td>Insert record</td></tr>
+              <tr><td><code>/api/update</code></td><td>PATCH</td><td>Update records</td></tr>
+              <tr><td><code>/api/delete</code></td><td>DELETE</td><td>Delete records</td></tr>
+              <tr><td><code>/api/execute</code></td><td>POST</td><td>Execute any SQL statement</td></tr>
+              <tr><td><code>/api/transaction</code></td><td>POST</td><td>Execute multi-statement transaction</td></tr>
+              <tr><td><code>/api/explain</code></td><td>POST</td><td>EXPLAIN ANALYZE a query</td></tr>
+              <tr><td><code>/api/tables/create</code></td><td>POST</td><td>Create a table</td></tr>
+              <tr><td><code>/api/tables/drop</code></td><td>POST</td><td>Drop a table</td></tr>
+              <tr><td><code>/api/tables/alter</code></td><td>POST</td><td>Alter a table</td></tr>
+              <tr><td><code>/api/databases</code></td><td>GET</td><td>List available databases</td></tr>
+              <tr><td><code>/api/databases/switch</code></td><td>POST</td><td>Switch to a different database</td></tr>
+              <tr><td><code>/api/projects</code></td><td>GET</td><td>List autoscaling projects</td></tr>
+              <tr><td><code>/api/projects/{name}</code></td><td>GET</td><td>Describe a specific project</td></tr>
+              <tr><td><code>/api/branches</code></td><td>GET</td><td>List branches (?project=...)</td></tr>
+              <tr><td><code>/api/branches/create</code></td><td>POST</td><td>Create a new branch</td></tr>
+              <tr><td><code>/api/branches/{name}</code></td><td>DELETE</td><td>Delete a branch</td></tr>
+              <tr><td><code>/api/endpoints</code></td><td>GET</td><td>List endpoints (?project=...&amp;branch=...)</td></tr>
+              <tr><td><code>/api/endpoints/{name}/config</code></td><td>PATCH</td><td>Update endpoint autoscaling config</td></tr>
+              <tr><td><code>/api/profile/{table_name}</code></td><td>GET</td><td>Profile table columns</td></tr>
+              <tr><td><code>/health</code></td><td>GET</td><td>Health check</td></tr>
+            </tbody>
+          </table>
 
-        <h3>Known Gotchas</h3>
-        <ul>
-          <li><strong>Trailing slash:</strong> MCP endpoint is at <code>/mcp/</code> (with trailing slash). Starlette redirects <code>/mcp</code> to <code>/mcp/</code> automatically.</li>
-          <li><strong>MAS sends JSON strings:</strong> MAS agents may serialize nested objects as JSON strings. The server handles this with <code>_ensure_dict()</code>.</li>
-          <li><strong>Table permissions:</strong> Tables created via <code>databricks psql</code> are owned by the user, not the app SP. Grant permissions after creating tables.</li>
-          <li><strong>OAuth M2M for UC connection:</strong> SP OAuth secrets must be created at the Account Console level, not via workspace API.</li>
-          <li><strong>CAN_USE for users group:</strong> The MAS MCP proxy needs <code>CAN_USE</code> on the app. Grant to <code>users</code> group.</li>
-        </ul>
+          <h3>Known Gotchas</h3>
+          <ul>
+            <li><strong>Trailing slash:</strong> MCP endpoint is at <code>/mcp/</code> (with trailing slash). Starlette redirects <code>/mcp</code> to <code>/mcp/</code> automatically.</li>
+            <li><strong>MAS sends JSON strings:</strong> MAS agents may serialize nested objects as JSON strings. The server handles this with <code>_ensure_dict()</code>.</li>
+            <li><strong>Table permissions:</strong> Tables created via <code>databricks psql</code> are owned by the user, not the app SP. Grant permissions after creating tables.</li>
+            <li><strong>OAuth M2M for UC connection:</strong> SP OAuth secrets must be created at the Account Console level, not via workspace API.</li>
+            <li><strong>CAN_USE for users group:</strong> The MAS MCP proxy needs <code>CAN_USE</code> on the app. Grant to <code>users</code> group.</li>
+            <li><strong>Autoscaling scale-to-zero:</strong> If the endpoint is suspended, the first request may take 2-5 seconds while compute wakes up.</li>
+          </ul>
 
-        <h3>Reuse Across Demos</h3>
-        <p>This server is fully generic. Change only the <code>instance_name</code> and <code>database_name</code> in <code>app.yaml</code> to point to any Lakebase database. No code changes needed.</p>
+          <h3>Reuse Across Demos</h3>
+          <p>This server is fully generic. Change only the <code>instance_name</code> and <code>database_name</code> in <code>app.yaml</code> to point to any Lakebase database. No code changes needed.</p>
+        </div>
       </div>
     </div>
-  </div>
 
+  </div>
 </div>
 
 <script>
@@ -443,6 +1249,7 @@ GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO \"APP_SP_CLIENT_ID\";
 let currentTable = null;
 let toolsData = [];
 let tablesData = [];
+let projectsData = [];
 
 // ── API helpers ─────────────────────────────────────────────────────
 async function api(path, opts = {}) {
@@ -461,13 +1268,31 @@ function escapeHtml(str) {
   return d.innerHTML;
 }
 
+function stateClass(state) {
+  if (!state) return 'unknown';
+  const s = String(state).toLowerCase();
+  if (s === 'active' || s === 'running' || s === 'ready') return 'active';
+  if (s === 'suspended' || s === 'idle' || s === 'paused') return 'suspended';
+  if (s === 'error' || s === 'failed' || s === 'deleted') return 'error';
+  return 'unknown';
+}
+
+function stateLabel(state) {
+  return state ? String(state).charAt(0).toUpperCase() + String(state).slice(1).toLowerCase() : 'Unknown';
+}
+
 // ── Navigation ──────────────────────────────────────────────────────
-document.querySelectorAll('nav button').forEach(btn => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+document.querySelectorAll('.nav-item').forEach(item => {
+  item.addEventListener('click', () => {
+    document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-    btn.classList.add('active');
-    document.getElementById('page-' + btn.dataset.page).classList.add('active');
+    item.classList.add('active');
+    const pageId = 'page-' + item.dataset.page;
+    document.getElementById(pageId).classList.add('active');
+
+    // Lazy load pages
+    if (item.dataset.page === 'projects' && !projectsData.length) loadProjects();
+    if (item.dataset.page === 'profiler') populateProfilerSelect();
   });
 });
 
@@ -475,11 +1300,15 @@ document.querySelectorAll('nav button').forEach(btn => {
 async function init() {
   try {
     const info = await api('/api/info');
-    document.getElementById('statusDot').className = 'dot ' + (info.lakebase_connected ? 'ok' : 'err');
-    document.getElementById('statusText').textContent = info.lakebase_connected ? 'Connected' : 'Disconnected';
+    const ok = info.lakebase_connected;
+    document.getElementById('statusDot').className = 'status-dot ' + (ok ? 'ok' : 'err');
+    document.getElementById('statusText').textContent = ok ? 'Connected' : 'Disconnected';
+    document.getElementById('brandDot').style.background = ok ? 'var(--neon-green)' : 'var(--red)';
+    document.getElementById('brandDot').style.boxShadow = ok ? '0 0 8px rgba(0,229,153,0.5)' : '0 0 8px rgba(239,68,68,0.5)';
   } catch (e) {
-    document.getElementById('statusDot').className = 'dot err';
+    document.getElementById('statusDot').className = 'status-dot err';
     document.getElementById('statusText').textContent = 'Error';
+    document.getElementById('brandDot').style.background = 'var(--red)';
   }
   loadTables();
   loadTools();
@@ -499,7 +1328,7 @@ async function loadTables() {
     list.innerHTML = tablesData.map(t => `
       <li onclick="selectTable('${escapeHtml(t.table_name)}')" data-table="${escapeHtml(t.table_name)}">
         <span>${escapeHtml(t.table_name)}</span>
-        <span class="count">${t.row_count >= 0 ? t.row_count.toLocaleString() + ' rows' : '--'}</span>
+        <span class="count">${t.row_count >= 0 ? t.row_count.toLocaleString() : '--'}</span>
       </li>
     `).join('');
   } catch (e) {
@@ -509,7 +1338,6 @@ async function loadTables() {
 
 async function selectTable(name) {
   currentTable = name;
-  // Update active state
   document.querySelectorAll('.table-list li').forEach(li => {
     li.classList.toggle('active', li.dataset.table === name);
   });
@@ -526,7 +1354,7 @@ async function selectTable(name) {
         <td><strong>${escapeHtml(c.column_name)}</strong></td>
         <td><span class="badge badge-type">${escapeHtml(c.data_type)}</span></td>
         <td>${c.is_nullable === 'YES' ? '<span class="badge badge-null">nullable</span>' : 'NOT NULL'}</td>
-        <td style="font-family:monospace;font-size:11px;color:var(--text2)">${c.column_default ? escapeHtml(c.column_default) : '--'}</td>
+        <td style="font-family:var(--mono);font-size:11px;color:var(--text-muted)">${c.column_default ? escapeHtml(c.column_default) : '--'}</td>
         <td>${c.is_primary_key ? '<span class="badge badge-pk">PK</span>' : ''}</td>
       </tr>
     `).join('');
@@ -551,7 +1379,7 @@ async function loadSample() {
       <tbody>${rows.map(r => `<tr>${cols.map(c => {
         let v = r[c];
         if (v && typeof v === 'object') v = JSON.stringify(v);
-        const display = v === null ? '<span style="color:var(--text2)">null</span>' : escapeHtml(String(v).substring(0, 100));
+        const display = v === null ? '<span style="color:var(--text-muted)">null</span>' : escapeHtml(String(v).substring(0, 100));
         return `<td>${display}</td>`;
       }).join('')}</tr>`).join('')}</tbody>
     </table>`;
@@ -588,7 +1416,7 @@ async function runQuery() {
       <tbody>${rows.map(r => `<tr>${cols.map(c => {
         let v = r[c];
         if (v && typeof v === 'object') v = JSON.stringify(v);
-        const display = v === null ? '<span style="color:var(--text2)">null</span>' : escapeHtml(String(v).substring(0, 200));
+        const display = v === null ? '<span style="color:var(--text-muted)">null</span>' : escapeHtml(String(v).substring(0, 200));
         return `<td>${display}</td>`;
       }).join('')}</tr>`).join('')}</tbody>
     </table></div>`;
@@ -604,33 +1432,105 @@ document.getElementById('sqlInput').addEventListener('keydown', (e) => {
 });
 
 // ── MCP Tools ───────────────────────────────────────────────────────
+const toolCategories = {
+  'Database (READ)': ['list_tables', 'describe_table', 'read_query', 'list_schemas', 'get_connection_info'],
+  'Data Operations (WRITE)': ['insert_record', 'update_records', 'delete_records', 'batch_insert'],
+  'General SQL': ['execute_sql', 'execute_transaction', 'explain_query'],
+  'DDL': ['create_table', 'drop_table', 'alter_table'],
+  'Performance': ['list_slow_queries'],
+  'Infrastructure': ['list_projects', 'describe_project', 'get_connection_string', 'list_branches', 'list_endpoints', 'get_endpoint_status'],
+  'Branch Management': ['create_branch', 'delete_branch'],
+  'Autoscaling': ['configure_autoscaling', 'configure_scale_to_zero'],
+  'Data Quality': ['profile_table'],
+};
+
+function getToolBadge(name) {
+  const writeTools = ['insert_record', 'update_records', 'delete_records', 'batch_insert'];
+  const ddlTools = ['create_table', 'drop_table', 'alter_table'];
+  const sqlTools = ['execute_sql', 'execute_transaction', 'explain_query'];
+  const perfTools = ['list_slow_queries'];
+  const infraTools = ['list_projects', 'describe_project', 'get_connection_string', 'list_branches', 'list_endpoints', 'get_endpoint_status'];
+  const branchTools = ['create_branch', 'delete_branch'];
+  const scaleTools = ['configure_autoscaling', 'configure_scale_to_zero'];
+  const qualityTools = ['profile_table'];
+
+  if (writeTools.includes(name)) return { cls: 'badge-write', label: 'WRITE' };
+  if (ddlTools.includes(name)) return { cls: 'badge-ddl', label: 'DDL' };
+  if (sqlTools.includes(name)) return { cls: 'badge-sql', label: 'SQL' };
+  if (perfTools.includes(name)) return { cls: 'badge-perf', label: 'PERF' };
+  if (infraTools.includes(name)) return { cls: 'badge-infra', label: 'INFRA' };
+  if (branchTools.includes(name)) return { cls: 'badge-branch', label: 'BRANCH' };
+  if (scaleTools.includes(name)) return { cls: 'badge-scale', label: 'SCALE' };
+  if (qualityTools.includes(name)) return { cls: 'badge-quality', label: 'QUALITY' };
+  return { cls: 'badge-read', label: 'READ' };
+}
+
 async function loadTools() {
   try {
     toolsData = await api('/api/tools');
     const container = document.getElementById('toolsList');
-    container.innerHTML = toolsData.map(t => {
-      const writeTools = ['insert_record', 'update_records', 'delete_records', 'batch_insert'];
-      const ddlTools = ['create_table', 'drop_table', 'alter_table'];
-      const sqlTools = ['execute_sql', 'execute_transaction', 'explain_query'];
-      const perfTools = ['list_slow_queries'];
-      let badgeClass = 'badge-read', badgeLabel = 'READ';
-      if (writeTools.includes(t.name)) { badgeClass = 'badge-write'; badgeLabel = 'WRITE'; }
-      else if (ddlTools.includes(t.name)) { badgeClass = 'badge-pk'; badgeLabel = 'DDL'; }
-      else if (sqlTools.includes(t.name)) { badgeClass = 'badge-type'; badgeLabel = 'SQL'; }
-      else if (perfTools.includes(t.name)) { badgeClass = 'badge-null'; badgeLabel = 'PERF'; }
-      const required = t.inputSchema.required || [];
-      const props = t.inputSchema.properties || {};
-      const params = Object.entries(props).map(([k, v]) => {
-        const req = required.includes(k);
-        let typeStr = v.type || (v.oneOf ? v.oneOf.map(o => o.type).join(' | ') : '?');
-        return `<code>${k}</code>${req ? ' <span style="color:var(--red)">*</span>' : ''} <span style="color:var(--text2)">(${typeStr})</span>`;
-      }).join(', ');
-      return `<div class="tool-card">
-        <h3><span class="badge ${badgeClass}">${badgeLabel}</span> ${escapeHtml(t.name)}</h3>
-        <p>${escapeHtml(t.description)}</p>
-        ${params ? `<div style="font-size:12px;margin-bottom:8px">Parameters: ${params}</div>` : ''}
-      </div>`;
-    }).join('');
+
+    // Build lookup
+    const toolMap = {};
+    toolsData.forEach(t => { toolMap[t.name] = t; });
+
+    let html = '';
+    for (const [catName, toolNames] of Object.entries(toolCategories)) {
+      const catTools = toolNames.filter(n => toolMap[n]);
+      if (!catTools.length) continue;
+
+      const catId = catName.replace(/[^a-zA-Z]/g, '');
+      html += `<div class="tool-category">
+        <div class="tool-category-header" onclick="toggleCategory('${catId}')">
+          <span class="arrow" id="arrow-${catId}">&#9660;</span>
+          <h3>${escapeHtml(catName)}</h3>
+          <span class="count-badge">${catTools.length} tool${catTools.length > 1 ? 's' : ''}</span>
+        </div>
+        <div class="tool-category-body" id="cat-${catId}">`;
+
+      catTools.forEach(name => {
+        const t = toolMap[name];
+        const badge = getToolBadge(name);
+        const required = t.inputSchema.required || [];
+        const props = t.inputSchema.properties || {};
+        const params = Object.entries(props).map(([k, v]) => {
+          const req = required.includes(k);
+          let typeStr = v.type || (v.oneOf ? v.oneOf.map(o => o.type).join(' | ') : '?');
+          return `<code style="font-family:var(--mono);font-size:11px">${k}</code>${req ? ' <span style="color:var(--red)">*</span>' : ''} <span style="color:var(--text-muted);font-size:11px">(${typeStr})</span>`;
+        }).join(', ');
+
+        html += `<div class="tool-card">
+          <h3><span class="badge ${badge.cls}">${badge.label}</span> ${escapeHtml(t.name)}</h3>
+          <p>${escapeHtml(t.description)}</p>
+          ${params ? `<div style="font-size:12px">Params: ${params}</div>` : ''}
+        </div>`;
+      });
+
+      html += '</div></div>';
+    }
+
+    // Show any tools not categorized
+    const categorized = new Set(Object.values(toolCategories).flat());
+    const uncategorized = toolsData.filter(t => !categorized.has(t.name));
+    if (uncategorized.length) {
+      html += `<div class="tool-category">
+        <div class="tool-category-header" onclick="toggleCategory('Other')">
+          <span class="arrow" id="arrow-Other">&#9660;</span>
+          <h3>Other</h3>
+          <span class="count-badge">${uncategorized.length}</span>
+        </div>
+        <div class="tool-category-body" id="cat-Other">`;
+      uncategorized.forEach(t => {
+        const badge = getToolBadge(t.name);
+        html += `<div class="tool-card">
+          <h3><span class="badge ${badge.cls}">${badge.label}</span> ${escapeHtml(t.name)}</h3>
+          <p>${escapeHtml(t.description)}</p>
+        </div>`;
+      });
+      html += '</div></div>';
+    }
+
+    container.innerHTML = html;
 
     // Populate playground select
     const select = document.getElementById('playTool');
@@ -639,6 +1539,14 @@ async function loadTools() {
   } catch (e) {
     document.getElementById('toolsList').innerHTML = `<div class="empty" style="color:var(--red)">${escapeHtml(e.message)}</div>`;
   }
+}
+
+function toggleCategory(catId) {
+  const body = document.getElementById('cat-' + catId);
+  const arrow = document.getElementById('arrow-' + catId);
+  if (!body) return;
+  body.classList.toggle('collapsed');
+  arrow.classList.toggle('collapsed');
 }
 
 function updatePlayForm() {
@@ -664,19 +1572,19 @@ function updatePlayForm() {
     if (isBool) {
       const def = v.default !== undefined ? v.default : false;
       return `<div class="form-group">
-        <label>${k}${req ? ' *' : ''} <span style="font-weight:normal;color:var(--text2)">${v.description || ''}</span></label>
+        <label>${k}${req ? ' *' : ''} <span style="font-weight:normal;color:var(--text-muted)">${v.description || ''}</span></label>
         <select id="play-${k}"><option value="true" ${def ? 'selected' : ''}>true</option><option value="false" ${!def ? 'selected' : ''}>false</option></select>
       </div>`;
     }
     if (isObj || isArr) {
       const placeholder = isArr ? '[{"key": "value"}]' : '{"key": "value"}';
       return `<div class="form-group">
-        <label>${k}${req ? ' *' : ''} <span style="font-weight:normal;color:var(--text2)">${v.description || ''}</span></label>
+        <label>${k}${req ? ' *' : ''} <span style="font-weight:normal;color:var(--text-muted)">${v.description || ''}</span></label>
         <textarea id="play-${k}" placeholder='${placeholder}'></textarea>
       </div>`;
     }
     return `<div class="form-group">
-      <label>${k}${req ? ' *' : ''} <span style="font-weight:normal;color:var(--text2)">${v.description || ''}</span></label>
+      <label>${k}${req ? ' *' : ''} <span style="font-weight:normal;color:var(--text-muted)">${v.description || ''}</span></label>
       <input id="play-${k}" type="text" placeholder="${escapeHtml(v.description || k)}">
     </div>`;
   }).join('');
@@ -712,23 +1620,35 @@ async function runPlayTool() {
 
   // Map tool names to REST endpoints
   const toolRoutes = {
-    list_tables:      () => api('/api/tables'),
-    describe_table:   () => api(`/api/tables/${encodeURIComponent(args.table_name)}`),
-    read_query:       () => api('/api/query', { method: 'POST', body: JSON.stringify({ sql: args.sql }) }),
-    insert_record:    () => api('/api/insert', { method: 'POST', body: JSON.stringify(args) }),
-    update_records:   () => api('/api/update', { method: 'PATCH', body: JSON.stringify(args) }),
-    delete_records:   () => api('/api/delete', { method: 'DELETE', body: JSON.stringify(args) }),
-    execute_sql:      () => api('/api/execute', { method: 'POST', body: JSON.stringify(args) }),
-    execute_transaction: () => api('/api/transaction', { method: 'POST', body: JSON.stringify(args) }),
-    explain_query:    () => api('/api/explain', { method: 'POST', body: JSON.stringify(args) }),
-    create_table:     () => api('/api/tables/create', { method: 'POST', body: JSON.stringify(args) }),
-    drop_table:       () => api('/api/tables/drop', { method: 'POST', body: JSON.stringify(args) }),
-    alter_table:      () => api('/api/tables/alter', { method: 'POST', body: JSON.stringify(args) }),
-    batch_insert:     () => api('/api/insert', { method: 'POST', body: JSON.stringify(args) }),
-    list_schemas:     () => api('/api/execute', { method: 'POST', body: JSON.stringify({ sql: "SELECT schema_name, schema_owner FROM information_schema.schemata ORDER BY schema_name" }) }),
-    get_connection_info: () => api('/api/info'),
-    list_slow_queries:() => api('/api/execute', { method: 'POST', body: JSON.stringify({ sql: "SELECT query, calls, total_exec_time, mean_exec_time, rows FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT " + (args.limit || 10) }) }),
+    list_tables:        () => api('/api/tables'),
+    describe_table:     () => api(`/api/tables/${encodeURIComponent(args.table_name)}`),
+    read_query:         () => api('/api/query', { method: 'POST', body: JSON.stringify({ sql: args.sql }) }),
+    insert_record:      () => api('/api/insert', { method: 'POST', body: JSON.stringify(args) }),
+    update_records:     () => api('/api/update', { method: 'PATCH', body: JSON.stringify(args) }),
+    delete_records:     () => api('/api/delete', { method: 'DELETE', body: JSON.stringify(args) }),
+    execute_sql:        () => api('/api/execute', { method: 'POST', body: JSON.stringify(args) }),
+    execute_transaction:() => api('/api/transaction', { method: 'POST', body: JSON.stringify(args) }),
+    explain_query:      () => api('/api/explain', { method: 'POST', body: JSON.stringify(args) }),
+    create_table:       () => api('/api/tables/create', { method: 'POST', body: JSON.stringify(args) }),
+    drop_table:         () => api('/api/tables/drop', { method: 'POST', body: JSON.stringify(args) }),
+    alter_table:        () => api('/api/tables/alter', { method: 'POST', body: JSON.stringify(args) }),
+    batch_insert:       () => api('/api/insert', { method: 'POST', body: JSON.stringify(args) }),
+    list_schemas:       () => api('/api/execute', { method: 'POST', body: JSON.stringify({ sql: "SELECT schema_name, schema_owner FROM information_schema.schemata ORDER BY schema_name" }) }),
+    get_connection_info:() => api('/api/info'),
+    list_slow_queries:  () => api('/api/execute', { method: 'POST', body: JSON.stringify({ sql: "SELECT query, calls, total_exec_time, mean_exec_time, rows FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT " + (args.limit || 10) }) }),
+    list_projects:      () => api('/api/projects'),
+    describe_project:   () => api(`/api/projects/${encodeURIComponent(args.project)}`),
+    get_connection_string: () => api('/api/projects'),
+    list_branches:      () => api(`/api/branches?project=${encodeURIComponent(args.project)}`),
+    list_endpoints:     () => api(`/api/endpoints?project=${encodeURIComponent(args.project)}&branch=${encodeURIComponent(args.branch || 'production')}`),
+    get_endpoint_status:() => api('/api/endpoints?project=_'),
+    create_branch:      () => api('/api/branches/create', { method: 'POST', body: JSON.stringify(args) }),
+    delete_branch:      () => api(`/api/branches/${encodeURIComponent(args.branch)}`, { method: 'DELETE' }),
+    configure_autoscaling: () => api(`/api/endpoints/${encodeURIComponent(args.endpoint)}/config`, { method: 'PATCH', body: JSON.stringify({ min_cu: args.min_cu, max_cu: args.max_cu }) }),
+    configure_scale_to_zero: () => api(`/api/endpoints/${encodeURIComponent(args.endpoint)}/config`, { method: 'PATCH', body: JSON.stringify({ scale_to_zero: { enabled: args.enabled, idle_timeout_seconds: args.idle_timeout_seconds } }) }),
+    profile_table:      () => api(`/api/profile/${encodeURIComponent(args.table_name)}`),
   };
+
   try {
     const handler = toolRoutes[name];
     if (!handler) { resultDiv.innerHTML = '<div class="result error">No REST route for this tool</div>'; return; }
@@ -742,13 +1662,17 @@ async function runPlayTool() {
 // ── Database Switcher ────────────────────────────────────────────────
 async function loadDatabases() {
   const select = document.getElementById('dbSelect');
+  const instanceLabel = document.getElementById('instanceLabel');
   try {
     const data = await api('/api/databases');
     select.innerHTML = data.databases.map(db =>
       `<option value="${escapeHtml(db)}" ${db === data.current ? 'selected' : ''}>${escapeHtml(db)}</option>`
     ).join('');
+    if (instanceLabel && data.instance) {
+      instanceLabel.textContent = data.instance;
+      instanceLabel.title = 'Instance: ' + data.instance;
+    }
   } catch (e) {
-    // Fallback: show current db from info
     try {
       const info = await api('/api/info');
       select.innerHTML = `<option value="${escapeHtml(info.database)}" selected>${escapeHtml(info.database)}</option>`;
@@ -770,14 +1694,368 @@ async function switchDatabase() {
       body: JSON.stringify({ database: newDb }),
     });
     statusText.textContent = 'Connected';
-    // Refresh everything
     loadTables();
     loadTools();
   } catch (e) {
     statusText.textContent = 'Switch failed';
     alert('Failed to switch database: ' + e.message);
-    // Reload to restore state
     loadDatabases();
+  }
+}
+
+async function switchInstance(instanceName) {
+  const statusText = document.getElementById('statusText');
+  statusText.textContent = 'Switching instance...';
+  try {
+    const resp = await api('/api/instances/switch', {
+      method: 'POST',
+      body: JSON.stringify({ instance: instanceName }),
+    });
+    statusText.textContent = 'Connected';
+    // Update instance label
+    const instanceLabel = document.getElementById('instanceLabel');
+    if (instanceLabel) {
+      instanceLabel.textContent = resp.instance || instanceName;
+      instanceLabel.title = 'Instance: ' + (resp.instance || instanceName);
+    }
+    // Update database dropdown with new instance's databases
+    const select = document.getElementById('dbSelect');
+    if (resp.databases && resp.databases.length) {
+      select.innerHTML = resp.databases.map(db =>
+        `<option value="${escapeHtml(db)}" ${db === resp.database ? 'selected' : ''}>${escapeHtml(db)}</option>`
+      ).join('');
+    }
+    // Refresh tables and tools for the new connection
+    loadTables();
+    loadTools();
+    // Navigate to Explorer page
+    document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    const explorerNav = document.querySelector('.nav-item[data-page="explorer"]');
+    if (explorerNav) explorerNav.classList.add('active');
+    const explorerPage = document.getElementById('page-explorer');
+    if (explorerPage) explorerPage.classList.add('active');
+  } catch (e) {
+    statusText.textContent = 'Switch failed';
+    alert('Failed to switch instance: ' + e.message);
+    loadDatabases();
+  }
+}
+
+// ── Projects ────────────────────────────────────────────────────────
+async function loadProjects() {
+  const container = document.getElementById('projectsList');
+  container.innerHTML = '<div class="empty"><span class="spinner"></span> Loading instances...</div>';
+  try {
+    const data = await api('/api/projects');
+    projectsData = Array.isArray(data) ? data : (data.projects || data.instances || []);
+    if (!projectsData.length) {
+      container.innerHTML = '<div class="empty">No Lakebase instances or projects found.</div>';
+      return;
+    }
+
+    container.innerHTML = '<div class="card-grid">' + projectsData.map(p => {
+      const state = p.state || p.status || 'unknown';
+      const sc = stateClass(state);
+      const instanceType = p.instance_type || 'unknown';
+      const capacity = p.capacity || '';
+      const dns = p.read_write_dns || p.dns || '';
+      const createdAt = p.created_at ? new Date(p.created_at).toLocaleDateString() : '';
+      const isAutoscaling = instanceType === 'autoscaling';
+      const isProvisioned = instanceType === 'provisioned';
+      const name = escapeHtml(p.name || p.id);
+      const clickHandler = isProvisioned
+        ? `onclick="switchInstance('${name}')"`
+        : isAutoscaling
+          ? `onclick="navigateToBranches('${name}')"`
+          : '';
+      const clickTitle = isProvisioned ? 'title="Click to connect"' : '';
+
+      return `<div class="mini-card" ${clickHandler} ${clickTitle} style="cursor:pointer">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+          <h3 style="margin:0">${name}</h3>
+          <span class="badge ${isProvisioned ? 'badge-type' : 'badge-read'}" style="font-size:10px">${instanceType.toUpperCase()}</span>
+        </div>
+        <div class="meta"><span class="status-dot-inline ${sc}"></span>${stateLabel(state)}</div>
+        ${capacity ? `<div class="meta">Capacity: ${escapeHtml(String(capacity).replace('CU_', '').replace('_', ' '))} CU</div>` : ''}
+        ${dns ? `<div class="meta" style="font-family:var(--mono);font-size:10px;word-break:break-all;margin-top:4px">${escapeHtml(dns)}</div>` : ''}
+        ${createdAt ? `<div class="meta">Created: ${createdAt}</div>` : ''}
+        ${isProvisioned ? '<div class="meta" style="color:var(--neon-green);margin-top:6px;font-size:10px">Click to connect</div>' : ''}
+      </div>`;
+    }).join('') + '</div>';
+
+    // Populate project dropdowns on branches/endpoints pages
+    populateProjectSelects();
+  } catch (e) {
+    container.innerHTML = `<div class="empty" style="color:var(--red)">${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function populateProjectSelects() {
+  const selects = ['branchProjectSelect', 'endpointProjectSelect'];
+  selects.forEach(id => {
+    const sel = document.getElementById(id);
+    if (!sel) return;
+    const current = sel.value;
+    sel.innerHTML = '<option value="">Select project...</option>' +
+      projectsData.map(p => {
+        const name = p.name || p.id;
+        return `<option value="${escapeHtml(name)}" ${name === current ? 'selected' : ''}>${escapeHtml(name)}</option>`;
+      }).join('');
+  });
+}
+
+function navigateToBranches(project) {
+  // Navigate to branches page with project pre-selected
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  const branchNav = document.querySelector('.nav-item[data-page="branches"]');
+  branchNav.classList.add('active');
+  document.getElementById('page-branches').classList.add('active');
+  populateProjectSelects();
+  const sel = document.getElementById('branchProjectSelect');
+  sel.value = project;
+  loadBranches(project);
+}
+
+// ── Branches ────────────────────────────────────────────────────────
+async function loadBranches(project) {
+  if (!project) return;
+  const container = document.getElementById('branchesList');
+  container.innerHTML = '<div class="empty"><span class="spinner"></span> Loading branches...</div>';
+  try {
+    const data = await api(`/api/branches?project=${encodeURIComponent(project)}`);
+    const branches = Array.isArray(data) ? data : (data.branches || []);
+    if (!branches.length) {
+      container.innerHTML = '<div class="empty">No branches found for this project.</div>';
+      return;
+    }
+
+    container.innerHTML = `<div class="table-wrap"><table>
+      <thead><tr><th>Name</th><th>Parent</th><th>State</th><th>Created</th><th>Actions</th></tr></thead>
+      <tbody>${branches.map(b => {
+        const state = b.state || b.status || 'unknown';
+        const sc = stateClass(state);
+        const name = b.name || b.id;
+        const parent = b.parent_branch || b.parent || '--';
+        const created = b.created_at ? new Date(b.created_at).toLocaleString() : '--';
+        return `<tr>
+          <td><strong>${escapeHtml(name)}</strong></td>
+          <td style="color:var(--text-secondary)">${escapeHtml(parent)}</td>
+          <td><span class="status-dot-inline ${sc}"></span>${stateLabel(state)}</td>
+          <td style="color:var(--text-muted);font-size:12px">${created}</td>
+          <td><button class="btn btn-sm btn-danger" onclick="deleteBranch('${escapeHtml(name)}')">Delete</button></td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table></div>`;
+  } catch (e) {
+    container.innerHTML = `<div class="empty" style="color:var(--red)">${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function showCreateBranch() {
+  const card = document.getElementById('createBranchCard');
+  card.style.display = '';
+  document.getElementById('createBranchResult').innerHTML = '';
+  // Pre-fill project from dropdown
+  const sel = document.getElementById('branchProjectSelect');
+  if (sel.value) document.getElementById('newBranchProject').value = sel.value;
+}
+
+async function createBranch() {
+  const project = document.getElementById('newBranchProject').value.trim();
+  const branchId = document.getElementById('newBranchId').value.trim();
+  const parent = document.getElementById('newBranchParent').value.trim();
+  const resultDiv = document.getElementById('createBranchResult');
+
+  if (!project || !branchId) {
+    resultDiv.innerHTML = '<div class="result error">Project and Branch ID are required.</div>';
+    return;
+  }
+
+  resultDiv.innerHTML = '<div class="result"><span class="spinner"></span> Creating branch...</div>';
+  try {
+    const resp = await api('/api/branches/create', {
+      method: 'POST',
+      body: JSON.stringify({ project, branch_id: branchId, parent_branch: parent || 'production' }),
+    });
+    resultDiv.innerHTML = `<div class="result success">${escapeHtml(JSON.stringify(resp, null, 2))}</div>`;
+    // Refresh branches list
+    const sel = document.getElementById('branchProjectSelect');
+    if (sel.value) loadBranches(sel.value);
+  } catch (e) {
+    resultDiv.innerHTML = `<div class="result error">${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function deleteBranch(name) {
+  if (!confirm(`Are you sure you want to delete branch "${name}"? This action cannot be undone.`)) return;
+  try {
+    await api(`/api/branches/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    // Refresh
+    const sel = document.getElementById('branchProjectSelect');
+    if (sel.value) loadBranches(sel.value);
+  } catch (e) {
+    alert('Failed to delete branch: ' + e.message);
+  }
+}
+
+// ── Endpoints ───────────────────────────────────────────────────────
+async function loadEndpoints(project, branch) {
+  if (!project) return;
+  const container = document.getElementById('endpointsList');
+  container.innerHTML = '<div class="empty"><span class="spinner"></span> Loading endpoints...</div>';
+
+  let url = `/api/endpoints?project=${encodeURIComponent(project)}`;
+  if (branch) url += `&branch=${encodeURIComponent(branch)}`;
+
+  try {
+    const data = await api(url);
+    const endpoints = Array.isArray(data) ? data : (data.endpoints || []);
+    if (!endpoints.length) {
+      container.innerHTML = '<div class="empty">No endpoints found.</div>';
+      return;
+    }
+
+    container.innerHTML = '<div class="card-grid">' + endpoints.map(ep => {
+      const state = ep.state || ep.status || 'unknown';
+      const sc = stateClass(state);
+      const name = ep.name || ep.id;
+      const host = ep.host || ep.hostname || '--';
+      const minCu = ep.min_cu || ep.autoscaling?.min_cu || '--';
+      const maxCu = ep.max_cu || ep.autoscaling?.max_cu || '--';
+      const stzEnabled = ep.scale_to_zero?.enabled ?? ep.autoscaling?.scale_to_zero_enabled ?? false;
+      const idleTimeout = ep.scale_to_zero?.idle_timeout_seconds ?? ep.autoscaling?.idle_timeout_seconds ?? 300;
+
+      return `<div class="mini-card" style="cursor:default">
+        <h3>${escapeHtml(name)}</h3>
+        <div class="meta"><span class="status-dot-inline ${sc}"></span>${stateLabel(state)}</div>
+        <div class="meta" style="font-family:var(--mono);font-size:11px;word-break:break-all;">${escapeHtml(host)}</div>
+
+        <div style="margin-top:12px; padding-top:12px; border-top:1px solid var(--border);">
+          <label style="margin-bottom:8px; font-weight:600; color:var(--text-primary);">Autoscaling</label>
+          <div class="form-row" style="margin-bottom:10px;">
+            <div class="form-group">
+              <label>Min CU</label>
+              <input type="number" id="ep-min-${escapeHtml(name)}" value="${minCu}" min="0" style="width:100%">
+            </div>
+            <div class="form-group">
+              <label>Max CU</label>
+              <input type="number" id="ep-max-${escapeHtml(name)}" value="${maxCu}" min="0" style="width:100%">
+            </div>
+          </div>
+          <button class="btn btn-sm btn-primary" onclick="updateEndpointConfig('${escapeHtml(name)}')">Update Scaling</button>
+        </div>
+
+        <div style="margin-top:12px; padding-top:12px; border-top:1px solid var(--border);">
+          <label style="margin-bottom:8px; font-weight:600; color:var(--text-primary);">Scale-to-Zero</label>
+          <div style="display:flex; align-items:center; gap:12px; margin-bottom:8px;">
+            <label class="toggle">
+              <input type="checkbox" id="ep-stz-${escapeHtml(name)}" ${stzEnabled ? 'checked' : ''}>
+              <span class="slider"></span>
+            </label>
+            <span style="font-size:12px; color:var(--text-secondary);">${stzEnabled ? 'Enabled' : 'Disabled'}</span>
+          </div>
+          <div class="form-group" style="max-width:200px;">
+            <label>Idle timeout (seconds)</label>
+            <input type="number" id="ep-idle-${escapeHtml(name)}" value="${idleTimeout}" min="0">
+          </div>
+          <button class="btn btn-sm btn-secondary" onclick="updateScaleToZero('${escapeHtml(name)}')">Update S2Z</button>
+        </div>
+        <div id="ep-result-${escapeHtml(name)}" style="margin-top:8px;"></div>
+      </div>`;
+    }).join('') + '</div>';
+  } catch (e) {
+    container.innerHTML = `<div class="empty" style="color:var(--red)">${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function updateEndpointConfig(epName) {
+  const minCu = parseInt(document.getElementById('ep-min-' + epName).value, 10);
+  const maxCu = parseInt(document.getElementById('ep-max-' + epName).value, 10);
+  const resultDiv = document.getElementById('ep-result-' + epName);
+  resultDiv.innerHTML = '<span class="spinner"></span>';
+  try {
+    const resp = await api(`/api/endpoints/${encodeURIComponent(epName)}/config`, {
+      method: 'PATCH',
+      body: JSON.stringify({ min_cu: minCu, max_cu: maxCu }),
+    });
+    resultDiv.innerHTML = `<div class="result success" style="font-size:11px;padding:8px;">${escapeHtml(JSON.stringify(resp))}</div>`;
+  } catch (e) {
+    resultDiv.innerHTML = `<div class="result error" style="font-size:11px;padding:8px;">${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function updateScaleToZero(epName) {
+  const enabled = document.getElementById('ep-stz-' + epName).checked;
+  const idleTimeout = parseInt(document.getElementById('ep-idle-' + epName).value, 10);
+  const resultDiv = document.getElementById('ep-result-' + epName);
+  resultDiv.innerHTML = '<span class="spinner"></span>';
+  try {
+    const resp = await api(`/api/endpoints/${encodeURIComponent(epName)}/config`, {
+      method: 'PATCH',
+      body: JSON.stringify({ scale_to_zero: { enabled: enabled, idle_timeout_seconds: idleTimeout } }),
+    });
+    resultDiv.innerHTML = `<div class="result success" style="font-size:11px;padding:8px;">${escapeHtml(JSON.stringify(resp))}</div>`;
+  } catch (e) {
+    resultDiv.innerHTML = `<div class="result error" style="font-size:11px;padding:8px;">${escapeHtml(e.message)}</div>`;
+  }
+}
+
+// ── Profiler ────────────────────────────────────────────────────────
+function populateProfilerSelect() {
+  const sel = document.getElementById('profilerTableSelect');
+  if (!tablesData.length) return;
+  const current = sel.value;
+  sel.innerHTML = '<option value="">Select a table...</option>' +
+    tablesData.map(t => `<option value="${escapeHtml(t.table_name)}" ${t.table_name === current ? 'selected' : ''}>${escapeHtml(t.table_name)}</option>`).join('');
+}
+
+async function profileTable(tableName) {
+  if (!tableName) return;
+  const container = document.getElementById('profilerResult');
+  container.innerHTML = '<div class="empty"><span class="spinner"></span> Profiling table...</div>';
+  try {
+    const data = await api(`/api/profile/${encodeURIComponent(tableName)}`);
+    const cols = Array.isArray(data) ? data : (data.columns || data.profile || []);
+    if (!cols.length) {
+      container.innerHTML = '<div class="empty">No profiling data returned.</div>';
+      return;
+    }
+
+    container.innerHTML = `<div class="table-wrap"><table>
+      <thead><tr>
+        <th>Column</th><th>Type</th><th>Total</th><th>Non-null</th><th>Null %</th><th>Distinct</th><th>Min</th><th>Max</th><th>Avg</th>
+      </tr></thead>
+      <tbody>${cols.map(c => {
+        const total = c.total_count ?? c.total ?? '--';
+        const nonNull = c.non_null_count ?? c.non_null ?? '--';
+        const nullPct = c.null_percent ?? c.null_pct ?? (total !== '--' && nonNull !== '--' ? ((1 - nonNull / total) * 100).toFixed(1) : '--');
+        const distinct = c.distinct_count ?? c.distinct ?? '--';
+        const min = c.min_value ?? c.min ?? '--';
+        const max = c.max_value ?? c.max ?? '--';
+        const avg = c.avg_value ?? c.avg ?? c.mean ?? '--';
+        const nullPctNum = parseFloat(nullPct);
+        const barWidth = !isNaN(nullPctNum) ? Math.max(nullPctNum, 0) : 0;
+
+        return `<tr>
+          <td><strong>${escapeHtml(c.column_name || c.column || c.name)}</strong></td>
+          <td><span class="badge badge-type">${escapeHtml(c.data_type || c.type || '--')}</span></td>
+          <td>${total}</td>
+          <td>${nonNull}</td>
+          <td>
+            ${nullPct !== '--' ? nullPct + '%' : '--'}
+            ${barWidth > 0 ? ` <span class="null-bar" style="width:${Math.min(barWidth, 100)}px"></span>` : ''}
+          </td>
+          <td>${distinct}</td>
+          <td style="font-family:var(--mono);font-size:11px">${escapeHtml(String(min))}</td>
+          <td style="font-family:var(--mono);font-size:11px">${escapeHtml(String(max))}</td>
+          <td style="font-family:var(--mono);font-size:11px">${avg !== '--' && avg !== null ? (typeof avg === 'number' ? avg.toFixed(2) : escapeHtml(String(avg))) : '--'}</td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table></div>`;
+  } catch (e) {
+    container.innerHTML = `<div class="empty" style="color:var(--red)">${escapeHtml(e.message)}</div>`;
   }
 }
 

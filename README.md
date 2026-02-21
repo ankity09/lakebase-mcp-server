@@ -4,13 +4,13 @@ A reusable [Model Context Protocol](https://modelcontextprotocol.io) (MCP) serve
 
 ## What It Does
 
-- Exposes **16 MCP tools** for schema inspection, CRUD, general SQL, DDL, transactions, query analysis, and performance monitoring
+- Exposes **27 MCP tools** for schema inspection, CRUD, general SQL, DDL, transactions, query analysis, performance monitoring, infrastructure management, branch management, autoscaling config, and data quality profiling
 - **2 MCP resources** for table and schema discovery
 - **3 MCP prompts** for database exploration, schema design, and query optimization
 - Supports both **provisioned** and **autoscaling** Lakebase instances with automatic token refresh
 - Works as an **External MCP Server** agent in Databricks Multi-Agent Supervisors (MAS)
 - Includes a **web UI** with database explorer, SQL editor, tool playground, database switcher, and documentation
-- Provides a **REST API** (21 endpoints) for custom integrations
+- Provides a **REST API** (29 endpoints) for custom integrations
 
 ## Architecture
 
@@ -22,7 +22,7 @@ AI Agent (MAS / Claude Code / etc.)
 Lakebase MCP Server (Databricks App)
     |-- /          Web UI (explorer, SQL editor, tool playground, docs)
     |-- /mcp/      MCP endpoint (stateless StreamableHTTP)
-    |-- /api/*     REST API (21 endpoints)
+    |-- /api/*     REST API (29 endpoints)
     |-- /health    Health check
     |
     | psycopg2 (PostgreSQL wire protocol + auto token refresh)
@@ -145,7 +145,7 @@ curl https://<app-url>/health
 # {"status":"ok","lakebase":true}
 
 curl https://<app-url>/api/tools | python3 -c "import sys,json; print(len(json.load(sys.stdin)), 'tools')"
-# 16 tools
+# 27 tools
 ```
 
 Visit `https://<app-url>/` for the web UI.
@@ -177,7 +177,7 @@ In your MAS Supervisor configuration:
 2. Select the UC HTTP connection from Step 1
 3. Set the agent description (this is what the supervisor uses for routing):
    > "Execute Lakebase database operations — read and write to operational tables including inventory, shipments, orders, and supply chain data."
-4. Click **Rediscover tools** — the supervisor will detect all 16 MCP tools
+4. Click **Rediscover tools** — the supervisor will detect all 27 MCP tools
 
 ### Step 3: Test
 
@@ -200,10 +200,10 @@ The agent description determines when the supervisor routes requests to this age
 # Specific (better routing for supply chain use case)
 "Execute database operations on supply chain tables: inventory_levels, shipments,
 purchase_orders, demand_forecasts, routes, warehouses, notes. Supports reads, writes,
-DDL, transactions, and query analysis."
+DDL, transactions, query analysis, infrastructure management, and data quality profiling."
 ```
 
-## MCP Tools (16)
+## MCP Tools (27)
 
 ### Schema Inspection (READ)
 
@@ -246,6 +246,37 @@ DDL, transactions, and query analysis."
 |------|-------------|
 | `list_slow_queries` | Top N slow queries from pg_stat_statements. Graceful error if extension not enabled |
 
+### Infrastructure Management (INFRA)
+
+| Tool | Description |
+|------|-------------|
+| `list_projects` | List all Lakebase projects with status, branch count, endpoint info |
+| `describe_project` | Project details including branches, endpoints, and configuration |
+| `get_connection_string` | Build psql/psycopg2/jdbc connection string for an endpoint |
+| `list_branches` | List branches on a project with state and creation time |
+| `list_endpoints` | List endpoints on a branch with host, state, compute config |
+| `get_endpoint_status` | Endpoint state, host, and compute configuration |
+
+### Branch Management (BRANCH)
+
+| Tool | Description |
+|------|-------------|
+| `create_branch` | Create a dev/test branch from a parent branch |
+| `delete_branch` | Delete a branch with `confirm=true` safety gate (cannot delete production) |
+
+### Autoscaling Configuration (SCALE)
+
+| Tool | Description |
+|------|-------------|
+| `configure_autoscaling` | Set min/max compute units (CU) on an autoscaling endpoint |
+| `configure_scale_to_zero` | Enable/disable scale-to-zero (suspend) with configurable idle timeout |
+
+### Data Quality (QUALITY)
+
+| Tool | Description |
+|------|-------------|
+| `profile_table` | Column-level profiling: row count, null counts/%, distinct counts, min/max, avg for numerics |
+
 ## MCP Resources (2)
 
 | Resource URI | Description |
@@ -263,16 +294,27 @@ DDL, transactions, and query analysis."
 
 ## Web UI
 
-The root URL (`/`) serves a single-page application with:
+The root URL (`/`) serves a Neon.tech-inspired single-page application with fixed sidebar navigation:
 
+**Database**
 - **Database Explorer** — Browse tables, view column schemas and constraints, sample data
 - **SQL Query** — Run read-only queries with tabular results (Ctrl/Cmd+Enter to execute)
-- **MCP Tools** — Tool reference cards with type badges (READ/WRITE/SQL/DDL/PERF) + interactive playground for all 16 tools
+- **MCP Tools** — Tool reference cards categorized by type + interactive playground for all 27 tools
+
+**Infrastructure**
+- **Projects** — Card grid of Lakebase projects with status badges and branch counts
+- **Branches** — Branch management table with create/delete operations
+- **Endpoints** — Endpoint cards with autoscaling CU sliders and scale-to-zero config
+
+**Quality**
+- **Profiler** — Table selector with column-level stats: nulls, distinct, min/max, avg
+
+**Reference**
 - **Documentation** — Deployment guide, MAS connection instructions, REST API reference
 
-The header includes a **database switcher** dropdown to switch between databases on the same Lakebase instance without redeploying.
+The sidebar includes a **database switcher** dropdown and live connection status indicator.
 
-## REST API (21 endpoints)
+## REST API (29 endpoints)
 
 ### Core
 
@@ -311,6 +353,24 @@ The header includes a **database switcher** dropdown to switch between databases
 | `/api/execute` | POST | Execute any SQL statement |
 | `/api/transaction` | POST | Execute multi-statement transaction |
 | `/api/explain` | POST | EXPLAIN ANALYZE a query |
+
+### Infrastructure Management
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/projects` | GET | List all Lakebase projects |
+| `/api/projects/{id}` | GET | Describe a project with branches |
+| `/api/branches` | GET | List branches (`?project=...`) |
+| `/api/branches/create` | POST | Create a new branch |
+| `/api/branches/{name}` | DELETE | Delete a branch |
+| `/api/endpoints` | GET | List endpoints (`?project=...&branch=...`) |
+| `/api/endpoints/{name}/config` | PATCH | Configure autoscaling / scale-to-zero |
+
+### Data Quality
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/profile/{table}` | GET | Column-level profiling statistics |
 
 ## Reuse Across Demos
 

@@ -1,6 +1,6 @@
 # Lakebase MCP Server — Databricks App
 
-Reusable MCP server that exposes Lakebase (PostgreSQL) read/write operations as 16 MCP tools, 2 resources, and 3 prompts. Supports both provisioned Lakebase (via app.yaml database resource) and autoscaling Lakebase (via env vars). Token refresh is automatic. Deploy as a Databricks App, then connect it to a MAS Supervisor as an External MCP Server agent. Includes a web UI for exploring the database and testing tools.
+Reusable MCP server that exposes Lakebase (PostgreSQL) read/write operations as 27 MCP tools, 2 resources, and 3 prompts. Supports both provisioned Lakebase (via app.yaml database resource) and autoscaling Lakebase (via env vars). Token refresh is automatic. Deploy as a Databricks App, then connect it to a MAS Supervisor as an External MCP Server agent. Includes a web UI for exploring the database and testing tools.
 
 ## Architecture
 
@@ -53,7 +53,7 @@ env:
 
 No database resource needed — the server handles everything including endpoint discovery and token refresh.
 
-## MCP Tools (16)
+## MCP Tools (27)
 
 | Tool | Type | Description |
 |------|------|-------------|
@@ -73,6 +73,17 @@ No database resource needed — the server handles everything including endpoint
 | `batch_insert` | WRITE | Multi-row INSERT, JSONB-aware |
 | `list_schemas` | READ | List all schemas (not just public) |
 | `get_connection_info` | READ | Host/port/database/user (no password) |
+| `list_projects` | INFRA | List all Lakebase projects with status |
+| `describe_project` | INFRA | Project details + branches + endpoints |
+| `get_connection_string` | INFRA | Build psql/psycopg2/jdbc connection string for an endpoint |
+| `list_branches` | INFRA | List branches on a project with state |
+| `list_endpoints` | INFRA | List endpoints on a branch with host and compute config |
+| `get_endpoint_status` | INFRA | Endpoint state, host, compute configuration |
+| `create_branch` | BRANCH | Create a dev/test branch from a parent |
+| `delete_branch` | BRANCH | Delete a branch (not production) with confirm safety |
+| `configure_autoscaling` | SCALE | Set min/max compute units on an endpoint |
+| `configure_scale_to_zero` | SCALE | Enable/disable suspend + idle timeout |
+| `profile_table` | QUALITY | Column-level profiling: nulls, distinct, min/max, avg |
 
 ## MCP Resources (2)
 
@@ -110,16 +121,38 @@ No database resource needed — the server handles everything including endpoint
 | `/api/tables/alter` | POST | Alter a table |
 | `/api/databases` | GET | List available databases on the instance |
 | `/api/databases/switch` | POST | Switch to a different database |
+| `/api/projects` | GET | List all Lakebase projects |
+| `/api/projects/{id}` | GET | Describe a Lakebase project with branches |
+| `/api/branches` | GET | List branches on a project (?project=...) |
+| `/api/branches/create` | POST | Create a new branch |
+| `/api/branches/{name}` | DELETE | Delete a branch |
+| `/api/endpoints` | GET | List endpoints (?project=...&branch=...) |
+| `/api/endpoints/{name}/config` | PATCH | Configure autoscaling/scale-to-zero |
+| `/api/profile/{table}` | GET | Profile a table (column-level stats) |
 
 ## Web UI
 
-The root URL (`/`) serves a single-page application with 4 tabs:
+The root URL (`/`) serves a single-page application with Neon.tech-inspired sidebar navigation:
+
+**Database**
 1. **Database Explorer** — Browse tables, view schemas, sample data
 2. **SQL Query** — Execute read-only queries with tabular results
-3. **MCP Tools** — Tool reference + interactive playground to test each tool
-4. **Documentation** — Deployment guide, MAS connection instructions, gotchas
+3. **MCP Tools** — Tool reference + interactive playground to test each tool (categorized by type)
 
-The header includes a database switcher dropdown to switch between databases on the same Lakebase instance without redeployment.
+**Infrastructure**
+4. **Projects** — Card grid of Lakebase projects with status badges
+5. **Branches** — Branch management with create/delete operations
+6. **Endpoints** — Endpoint cards with autoscaling and scale-to-zero configuration
+
+**Quality**
+7. **Profiler** — Column-level data profiling (nulls, distinct, min/max, avg)
+
+**Reference**
+8. **Documentation** — Deployment guide, MAS connection instructions, gotchas
+
+The sidebar includes a database switcher dropdown and connection status indicator.
+
+Infrastructure tools use the `w.postgres.*` SDK methods and require autoscaling Lakebase or latest SDK. They return clear error messages when not available.
 
 ## Reuse Across Demos
 
