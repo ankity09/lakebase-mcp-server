@@ -5,20 +5,52 @@ Reusable MCP server that exposes Lakebase (PostgreSQL) read/write operations as 
 ## Architecture
 
 ```
-AI Agent (MAS / Claude / etc.)
+MAS Demo A → /db/demo_a_db/mcp/  ─┐
+MAS Demo B → /db/demo_b_db/mcp/  ─┤→ Lakebase MCP Server (single app)
+Browser UI  → /mcp/ (default db)  ─┘     ContextVar per-request → lazy pool per database
     |
-    | MCP Protocol (StreamableHTTP)
-    v
-Lakebase MCP Server (Databricks App)
-    |-- /          Web UI (database explorer, SQL query, tool playground, docs)
-    |-- /mcp/      MCP endpoint (StreamableHTTP, stateless)
-    |-- /api/*     REST API (tables, query, insert, update, delete)
-    |-- /health    Health check
+    |-- /                       Web UI (database explorer, SQL query, tool playground, docs)
+    |-- /mcp/                   MCP endpoint (default database, StreamableHTTP, stateless)
+    |-- /db/{database}/mcp/     MCP endpoint scoped to a specific database
+    |-- /api/*                  REST API (tables, query, insert, update, delete)
+    |-- /health                 Health check
+    |-- /db/{database}/health   Per-database health check
     |
     | psycopg2 (PostgreSQL wire protocol)
     v
 Lakebase Instance (PostgreSQL-compatible)
 ```
+
+## Multi-Database Routing
+
+A single deployed MCP server can serve multiple databases on the same Lakebase instance without redeployment. Each database gets its own URL namespace.
+
+### URL Patterns
+
+| Pattern | Description |
+|---------|-------------|
+| `/db/{database}/mcp/` | MCP endpoint scoped to `{database}` |
+| `/db/{database}/health` | Health check for `{database}` (verifies pool connectivity) |
+| `/mcp/` | MCP endpoint using the default database (from `PGDATABASE` or `LAKEBASE_DATABASE`) |
+| `/health` | Health check for the default database |
+
+### How It Works
+
+1. **ContextVar per-request scoping** — Each incoming request to `/db/{database}/mcp/` sets a `ContextVar` with the target database name. All downstream code (tool handlers, connection helpers) reads from this `ContextVar` to determine which database to query. This is concurrent-safe: simultaneous requests to different databases are fully isolated.
+
+2. **Lazy per-database connection pools** — The server maintains a dictionary of connection pools keyed by database name. A pool is created on first request to that database and reused for subsequent requests. Token refresh applies to all pools.
+
+3. **Backward compatibility** — The original `/mcp/` endpoint still works and routes to the default database configured via `PGDATABASE` (provisioned) or `LAKEBASE_DATABASE` (autoscaling). Existing MAS connections do not need any changes.
+
+### Example: Two MAS demos sharing one server
+
+```
+MAS Demo A  →  UC HTTP Connection with base_path=/db/supply_chain_db/mcp/
+MAS Demo B  →  UC HTTP Connection with base_path=/db/finance_db/mcp/
+Browser UI  →  /mcp/ (default database from app.yaml)
+```
+
+All three route to the same Databricks App. The server creates separate connection pools for `supply_chain_db` and `finance_db` on demand.
 
 ## Connection Modes
 
@@ -225,13 +257,14 @@ Visit `https://<app-url>/` for the web UI.
    - URL: `https://<mcp-app-url>/mcp`
    - Auth: Databricks OAuth M2M (SP OAuth secret from Account Console)
    - Connection fields: host, port=443, base_path=/mcp/, client_id, client_secret, oauth_scope=all-apis
+   - For multi-database setups, use `base_path=/db/{database}/mcp/` to scope the connection to a specific database
 
 2. In MAS Supervisor config, add agent:
    - Type: **External MCP Server**
    - Connection: the UC HTTP connection above
    - Description: "Execute Lakebase database operations — CRUD on operational tables"
 
-3. Click "Rediscover tools" in MAS config to detect the 16 MCP tools.
+3. Click "Rediscover tools" in MAS config to detect the 27 MCP tools.
 
 ## Known Gotchas
 

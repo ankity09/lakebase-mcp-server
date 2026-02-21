@@ -203,6 +203,54 @@ purchase_orders, demand_forecasts, routes, warehouses, notes. Supports reads, wr
 DDL, transactions, query analysis, infrastructure management, and data quality profiling."
 ```
 
+## Multi-Database Routing
+
+A single deployed MCP server can serve multiple databases on the same Lakebase instance. Each database gets its own URL namespace — no redeployment needed.
+
+### URL Patterns
+
+| Pattern | Description |
+|---------|-------------|
+| `/db/{database}/mcp/` | MCP endpoint scoped to `{database}` |
+| `/db/{database}/health` | Health check for `{database}` (verifies pool connectivity) |
+| `/mcp/` | MCP endpoint using the default database (backward compatible) |
+
+### How It Works
+
+- **ContextVar per-request scoping** — Each request to `/db/{database}/mcp/` sets a `ContextVar` with the target database name. All tool handlers read from this variable, so concurrent requests to different databases are fully isolated.
+- **Lazy per-database connection pools** — Pools are created on first request to a database and reused thereafter. Token refresh applies to all pools.
+- **Backward compatible** — `/mcp/` continues to work with the default database from `PGDATABASE` or `LAKEBASE_DATABASE`. Existing MAS connections need no changes.
+
+### Example: Two Demos Sharing One Server
+
+Deploy one Lakebase MCP Server app, then create separate UC HTTP connections for each demo:
+
+| Demo | UC HTTP Connection `base_path` | Database |
+|------|-------------------------------|----------|
+| Supply Chain | `/db/supply_chain_db/mcp/` | `supply_chain_db` |
+| Finance | `/db/finance_db/mcp/` | `finance_db` |
+| Browser UI | `/mcp/` (default) | From `app.yaml` |
+
+Each MAS Supervisor connects to the same app URL but with a different `base_path`. The server creates isolated connection pools per database on demand.
+
+### UC HTTP Connection for Multi-Database
+
+When creating the UC HTTP connection (see [Connecting to MAS](#connecting-to-mas)), set:
+
+- **Base path**: `/db/{database}/mcp/` (instead of `/mcp/`)
+
+Everything else (host, port, auth) stays the same.
+
+### Verify Per-Database Health
+
+```bash
+curl https://<app-url>/db/supply_chain_db/health
+# {"status":"ok","lakebase":true,"database":"supply_chain_db"}
+
+curl https://<app-url>/db/finance_db/health
+# {"status":"ok","lakebase":true,"database":"finance_db"}
+```
+
 ## MCP Tools (27)
 
 ### Schema Inspection (READ)

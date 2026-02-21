@@ -21,10 +21,12 @@ Tools:
 """
 
 import contextlib
+import contextvars
 import json
 import logging
 import os
 import re
+import threading
 import time
 import uuid
 from datetime import date, datetime
@@ -71,6 +73,15 @@ _TOKEN_REFRESH_SECONDS = 50 * 60  # refresh token every 50 min (expires at 60)
 _current_database = None       # override for database switcher (None = use env default)
 _current_instance = None       # override for instance switcher (None = use app.yaml default)
 _current_instance_host = None  # PGHOST override when switching instances
+
+# Per-request database context (for /db/{database}/mcp/ routing)
+_request_database: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "_request_database", default=None
+)
+
+# Per-database connection pool registry (lazy, concurrent-safe)
+_database_pools: dict[str, psycopg2.pool.ThreadedConnectionPool] = {}
+_database_pools_lock = threading.Lock()
 
 # ── Workspace client ─────────────────────────────────────────────────
 
@@ -207,6 +218,44 @@ def _init_pg_pool():
     logger.info("Lakebase pool initialized [%s]: %s:%s/%s", _connection_mode, pg_host, pg_port, pg_db)
 
 
+def _get_or_create_db_pool(database: str) -> psycopg2.pool.ThreadedConnectionPool:
+    """Get or lazily create a connection pool for a specific database."""
+    with _database_pools_lock:
+        if database in _database_pools:
+            return _database_pools[database]
+
+    # Create new pool for this database
+    if _connection_mode is None:
+        _detect_connection_mode()
+
+    if _connection_mode == "provisioned":
+        pg_host = _current_instance_host or os.environ.get("PGHOST")
+        pg_port = int(os.environ.get("PGPORT", "5432"))
+        pg_user = os.environ.get("PGUSER", "")
+        pg_pass = _get_pg_token_provisioned()
+        pg_ssl = os.environ.get("PGSSLMODE", "require")
+    else:
+        creds = _get_autoscale_credentials()
+        pg_host, pg_port, pg_user, pg_pass, pg_ssl = (
+            creds["host"], creds["port"], creds["user"], creds["password"], "require",
+        )
+
+    pool = psycopg2.pool.ThreadedConnectionPool(
+        minconn=1, maxconn=5,
+        host=pg_host, port=pg_port, dbname=database,
+        user=pg_user, password=pg_pass, sslmode=pg_ssl,
+    )
+    with _database_pools_lock:
+        # Double-check: another thread may have created it while we were connecting
+        if database not in _database_pools:
+            _database_pools[database] = pool
+        else:
+            pool.closeall()
+            pool = _database_pools[database]
+    logger.info("Created pool for database: %s", database)
+    return pool
+
+
 def _maybe_refresh_token():
     """Reinitialize pool if OAuth token is about to expire."""
     global _pg_pool
@@ -216,7 +265,20 @@ def _maybe_refresh_token():
 
 
 def _get_conn():
-    """Get a connection from the pool, re-init on pool errors or stale tokens."""
+    """Get a connection — uses request-scoped database if set, else global pool."""
+    req_db = _request_database.get(None)
+    if req_db:
+        pool = _get_or_create_db_pool(req_db)
+        try:
+            return pool.getconn()
+        except psycopg2.pool.PoolError:
+            # Pool exhausted — recreate
+            with _database_pools_lock:
+                _database_pools.pop(req_db, None)
+            pool = _get_or_create_db_pool(req_db)
+            return pool.getconn()
+
+    # Fall back to default global pool
     global _pg_pool
     if _pg_pool is None:
         _init_pg_pool()
@@ -229,7 +291,14 @@ def _get_conn():
 
 
 def _put_conn(conn, close=False):
-    """Return a connection to the pool."""
+    """Return connection to the appropriate pool."""
+    req_db = _request_database.get(None)
+    if req_db and req_db in _database_pools:
+        try:
+            _database_pools[req_db].putconn(conn, close=close)
+        except Exception:
+            pass
+        return
     if _pg_pool is not None and conn is not None:
         try:
             _pg_pool.putconn(conn, close=close)
@@ -2564,6 +2633,55 @@ async def health(request: Request):
     return JSONResponse({"status": "ok" if pg_ok else "degraded", "lakebase": pg_ok})
 
 
+async def db_health(request: Request):
+    """Health check for a specific database."""
+    database = request.path_params["database"]
+    token = _request_database.set(database)
+    try:
+        _execute_read("SELECT 1")
+        return JSONResponse({"status": "ok", "database": database})
+    except Exception as e:
+        return JSONResponse(
+            {"status": "error", "database": database, "error": str(e)},
+            status_code=500,
+        )
+    finally:
+        _request_database.reset(token)
+
+
+class DatabaseMCPRouter:
+    """ASGI app that extracts database from /db/{database}/mcp/ path,
+    sets the ContextVar, and forwards to the MCP session manager."""
+
+    def __init__(self, session_mgr):
+        self._session_mgr = session_mgr
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] not in ("http", "websocket"):
+            return
+        path = scope.get("path", "")
+        # Mount at /db strips the /db prefix, so path = /{database}/mcp/...
+        parts = path.strip("/").split("/")
+        if len(parts) >= 2 and parts[1] == "mcp":
+            database = parts[0]
+            # Rewrite scope path to /mcp/...
+            new_path = "/" + "/".join(parts[1:])
+            if not new_path.endswith("/"):
+                new_path += "/"
+            scope = dict(scope, path=new_path)
+            token = _request_database.set(database)
+            try:
+                await self._session_mgr.handle_request(scope, receive, send)
+            finally:
+                _request_database.reset(token)
+        else:
+            resp = JSONResponse(
+                {"error": "Expected /db/{database}/mcp/"},
+                status_code=400,
+            )
+            await resp(scope, receive, send)
+
+
 @contextlib.asynccontextmanager
 async def lifespan(app: Starlette):
     logger.info("Starting lakebase-mcp server")
@@ -2574,10 +2692,18 @@ async def lifespan(app: Starlette):
         logger.warning("Lakebase pool init deferred: %s", e)
     async with session_manager.run():
         yield
-    # Cleanup
+    # Cleanup — close all pools
     if _pg_pool:
         _pg_pool.closeall()
-        logger.info("Lakebase pool closed")
+        logger.info("Default Lakebase pool closed")
+    with _database_pools_lock:
+        for db_name, pool in _database_pools.items():
+            try:
+                pool.closeall()
+                logger.info("Pool closed for database: %s", db_name)
+            except Exception:
+                pass
+        _database_pools.clear()
 
 
 async def handle_mcp(scope, receive, send):
@@ -2623,6 +2749,10 @@ app = Starlette(
         Route("/api/profile/{table_name}", api_profile_table, methods=["GET"]),
         # Health & MCP
         Route("/health", health, methods=["GET"]),
+        # Multi-database MCP routing: /db/{database}/mcp/
+        Route("/db/{database}/health", db_health, methods=["GET"]),
+        Mount("/db", app=DatabaseMCPRouter(session_manager)),
+        # Default MCP (backward compatible — uses global pool)
         Route("/mcp", mcp_redirect, methods=["GET", "POST", "DELETE"]),
         Mount("/mcp", app=handle_mcp),
     ],
