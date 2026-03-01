@@ -73,8 +73,20 @@ def main():
     # 1. Health check
     print("=== Health Check ===")
     health = requests.get(f"{url}/health", headers={"Authorization": f"Bearer {token}"}, timeout=10)
-    print(f"  {health.json()}")
-    assert health.json()["lakebase"] is True, "Lakebase not connected!"
+    if health.status_code != 200:
+        print(f"  FAIL: HTTP {health.status_code}")
+        print(f"  Response: {health.text[:500]}")
+        sys.exit(1)
+    try:
+        health_data = health.json()
+    except requests.exceptions.JSONDecodeError:
+        print(f"  FAIL: Health endpoint returned non-JSON response")
+        print(f"  Status: {health.status_code}")
+        print(f"  Body: {health.text[:500]}")
+        print("  Hint: App may not be running, or Databricks proxy is returning a login page.")
+        sys.exit(1)
+    print(f"  {health_data}")
+    assert health_data.get("lakebase") is True, f"Lakebase not connected! Response: {health_data}"
     print("  PASS\n")
 
     # 2. Initialize
