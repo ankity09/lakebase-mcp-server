@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,7 +7,13 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/sql.min.js"></script>
 <style>
+  /* ═══════════════════════════════════════════════════════════════════
+     DESIGN TOKENS — Dark Theme (default)
+     ═══════════════════════════════════════════════════════════════════ */
   :root {
     /* Neon-inspired dark palette */
     --bg-deepest: #0A0A0A;
@@ -43,6 +49,7 @@
     /* Shadows */
     --shadow-sm: 0 1px 3px rgba(0,0,0,0.4);
     --shadow-md: 0 4px 12px rgba(0,0,0,0.5);
+    --shadow-lg: 0 8px 30px rgba(0,0,0,0.6);
     --glow-green: 0 0 20px rgba(0, 229, 153, 0.2);
 
     /* Fonts */
@@ -51,8 +58,68 @@
 
     /* Sidebar */
     --sidebar-width: 220px;
+    --sidebar-collapsed-width: 60px;
+
+    /* Transition durations */
+    --transition-fast: 0.15s;
+    --transition-normal: 0.2s;
+    --transition-slow: 0.3s;
+
+    /* Toast stack */
+    --toast-offset: 20px;
+
+    /* Overlay / backdrop */
+    --backdrop-blur: 8px;
+    --overlay-bg: rgba(0, 0, 0, 0.6);
+
+    /* Z-index layers */
+    --z-sidebar: 200;
+    --z-sticky: 100;
+    --z-overlay: 500;
+    --z-modal: 600;
+    --z-command-palette: 700;
+    --z-toast: 800;
   }
 
+  /* ═══════════════════════════════════════════════════════════════════
+     LIGHT THEME (data-theme="light")
+     ═══════════════════════════════════════════════════════════════════ */
+  [data-theme="light"] {
+    --bg-deepest: #F5F5F7;
+    --bg-deep: #FFFFFF;
+    --bg-surface: #F0F0F2;
+    --bg-card: #FFFFFF;
+    --bg-hover: #E8E8EB;
+
+    --border: #D4D4D8;
+    --border-hover: #A1A1AA;
+
+    --text-primary: #18181B;
+    --text-secondary: #52525B;
+    --text-muted: #A1A1AA;
+
+    --neon-green: #059669;
+    --neon-green-dim: #047857;
+    --neon-green-glow: rgba(5, 150, 105, 0.1);
+    --neon-green-border: rgba(5, 150, 105, 0.3);
+
+    --blue: #2563EB;
+    --red: #DC2626;
+    --yellow: #D97706;
+    --purple: #7C3AED;
+    --cyan: #0891B2;
+
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.08);
+    --shadow-md: 0 4px 12px rgba(0,0,0,0.1);
+    --shadow-lg: 0 8px 30px rgba(0,0,0,0.12);
+    --glow-green: 0 0 20px rgba(5, 150, 105, 0.15);
+
+    --overlay-bg: rgba(255, 255, 255, 0.6);
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════
+     RESET & BASE
+     ═══════════════════════════════════════════════════════════════════ */
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
   body {
@@ -67,7 +134,9 @@
   a { color: var(--blue); text-decoration: none; }
   a:hover { text-decoration: underline; }
 
-  /* ── Sidebar ─────────────────────────────────────────────────── */
+  /* ═══════════════════════════════════════════════════════════════════
+     SIDEBAR
+     ═══════════════════════════════════════════════════════════════════ */
   .sidebar {
     position: fixed;
     top: 0;
@@ -78,13 +147,15 @@
     border-right: 1px solid var(--border);
     display: flex;
     flex-direction: column;
-    z-index: 200;
+    z-index: var(--z-sidebar);
     overflow-y: auto;
+    transition: width var(--transition-slow) ease;
   }
 
   .sidebar-header {
     padding: 20px 16px 12px 16px;
     border-bottom: 1px solid var(--border);
+    transition: padding var(--transition-slow) ease;
   }
 
   .sidebar-brand {
@@ -108,6 +179,9 @@
     font-weight: 700;
     color: var(--text-primary);
     letter-spacing: -0.3px;
+    white-space: nowrap;
+    overflow: hidden;
+    transition: opacity var(--transition-slow) ease;
   }
 
   .instance-label {
@@ -130,7 +204,7 @@
     font-size: 12px;
     font-family: var(--sans);
     cursor: pointer;
-    transition: border-color 0.2s ease;
+    transition: border-color var(--transition-normal) ease;
   }
 
   .sidebar-db-select:focus {
@@ -150,6 +224,9 @@
     text-transform: uppercase;
     letter-spacing: 1px;
     color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    transition: opacity var(--transition-slow) ease;
   }
 
   .nav-item {
@@ -162,8 +239,10 @@
     color: var(--text-secondary);
     cursor: pointer;
     border-left: 3px solid transparent;
-    transition: all 0.2s ease;
+    transition: all var(--transition-normal) ease;
     user-select: none;
+    white-space: nowrap;
+    overflow: hidden;
   }
 
   .nav-item:hover {
@@ -188,11 +267,16 @@
     opacity: 1;
   }
 
+  .nav-item span {
+    transition: opacity var(--transition-slow) ease;
+  }
+
   .sidebar-footer {
     padding: 12px 16px;
     border-top: 1px solid var(--border);
     font-size: 11px;
     color: var(--text-muted);
+    transition: padding var(--transition-slow) ease;
   }
 
   .sidebar-footer .status-row {
@@ -205,17 +289,164 @@
     width: 7px;
     height: 7px;
     border-radius: 50%;
+    flex-shrink: 0;
   }
 
   .sidebar-footer .status-dot.ok { background: var(--neon-green); box-shadow: 0 0 6px rgba(0,229,153,0.5); }
   .sidebar-footer .status-dot.err { background: var(--red); }
 
-  /* ── Main Content ────────────────────────────────────────────── */
+  /* ── Sidebar collapse toggle ──────────────────────────────────── */
+  .sidebar-collapse-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    padding: 10px 16px;
+    background: transparent;
+    border: none;
+    border-top: 1px solid var(--border);
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 12px;
+    font-family: var(--sans);
+    gap: 8px;
+    transition: all var(--transition-normal) ease;
+  }
+
+  .sidebar-collapse-btn:hover {
+    color: var(--text-primary);
+    background: var(--bg-hover);
+  }
+
+  .sidebar-collapse-btn svg {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    transition: transform var(--transition-slow) ease;
+  }
+
+  .sidebar-collapse-btn .collapse-label {
+    white-space: nowrap;
+    overflow: hidden;
+    transition: opacity var(--transition-slow) ease;
+  }
+
+  /* ── Sidebar collapsed state ──────────────────────────────────── */
+  .sidebar.collapsed {
+    width: var(--sidebar-collapsed-width);
+    overflow: hidden;
+  }
+
+  .sidebar.collapsed .sidebar-header {
+    padding: 12px 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .sidebar.collapsed .sidebar-brand {
+    justify-content: center;
+    gap: 0;
+  }
+
+  .sidebar.collapsed .sidebar-brand h1 {
+    display: none;
+  }
+
+  .sidebar.collapsed .sidebar-brand .theme-toggle {
+    display: none;
+  }
+
+  .sidebar.collapsed .instance-label,
+  .sidebar.collapsed .sidebar-db-select,
+  .sidebar.collapsed .nav-section-label {
+    display: none;
+  }
+
+  .sidebar.collapsed .nav-item {
+    justify-content: center;
+    padding: 12px 0;
+    border-left-width: 0;
+  }
+
+  .sidebar.collapsed .nav-item span {
+    display: none;
+  }
+
+  .sidebar.collapsed .sidebar-footer .status-text,
+  .sidebar.collapsed .sidebar-footer .status-details {
+    display: none;
+  }
+
+  .sidebar.collapsed .sidebar-footer {
+    padding: 10px 8px;
+    display: flex;
+    justify-content: center;
+  }
+
+  .sidebar.collapsed .sidebar-collapse-btn {
+    padding: 10px 0;
+    justify-content: center;
+  }
+
+  .sidebar.collapsed .sidebar-collapse-btn .collapse-label {
+    display: none;
+  }
+
+  .sidebar.collapsed .sidebar-collapse-btn svg {
+    transform: rotate(180deg);
+  }
+
+  .sidebar.collapsed + .main {
+    margin-left: var(--sidebar-collapsed-width);
+  }
+
+  /* ── Enhanced sidebar footer — status display ─────────────────── */
+  .sidebar-footer .status-details {
+    margin-top: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .sidebar-footer .status-detail-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 10px;
+  }
+
+  .sidebar-footer .status-detail-row .detail-label {
+    color: var(--text-muted);
+  }
+
+  .sidebar-footer .status-detail-row .detail-value {
+    color: var(--text-secondary);
+    font-family: var(--mono);
+    font-size: 10px;
+  }
+
+  .sidebar-footer .latency-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-family: var(--mono);
+    font-size: 10px;
+  }
+
+  .sidebar-footer .latency-badge.good { color: var(--neon-green); }
+  .sidebar-footer .latency-badge.ok { color: var(--yellow); }
+  .sidebar-footer .latency-badge.slow { color: var(--red); }
+
+  /* ═══════════════════════════════════════════════════════════════════
+     MAIN CONTENT
+     ═══════════════════════════════════════════════════════════════════ */
   .main {
     margin-left: var(--sidebar-width);
     flex: 1;
     min-height: 100vh;
     overflow-y: auto;
+    transition: margin-left var(--transition-slow) ease;
   }
 
   .container {
@@ -225,7 +456,15 @@
   }
 
   .page { display: none; }
-  .page.active { display: block; }
+  .page.active {
+    display: block;
+    animation: pageIn var(--transition-slow) ease;
+  }
+
+  @keyframes pageIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
 
   .page-title {
     font-size: 22px;
@@ -242,14 +481,53 @@
     margin-bottom: 20px;
   }
 
-  /* ── Cards ───────────────────────────────────────────────────── */
+  /* ═══════════════════════════════════════════════════════════════════
+     BREADCRUMBS
+     ═══════════════════════════════════════════════════════════════════ */
+  .breadcrumbs {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 16px;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  .breadcrumbs a,
+  .breadcrumbs .breadcrumb-link {
+    color: var(--text-secondary);
+    text-decoration: none;
+    cursor: pointer;
+    transition: color var(--transition-fast) ease;
+  }
+
+  .breadcrumbs a:hover,
+  .breadcrumbs .breadcrumb-link:hover {
+    color: var(--neon-green);
+    text-decoration: none;
+  }
+
+  .breadcrumbs .breadcrumb-sep {
+    color: var(--text-muted);
+    font-size: 10px;
+    user-select: none;
+  }
+
+  .breadcrumbs .breadcrumb-current {
+    color: var(--text-primary);
+    font-weight: 500;
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════
+     CARDS
+     ═══════════════════════════════════════════════════════════════════ */
   .card {
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: var(--radius-card);
     margin-bottom: 20px;
     overflow: hidden;
-    transition: border-color 0.2s ease;
+    transition: border-color var(--transition-normal) ease;
   }
 
   .card:hover {
@@ -270,6 +548,12 @@
     color: var(--text-primary);
   }
 
+  .card-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
   .card-body {
     padding: 18px;
   }
@@ -287,7 +571,7 @@
     border-radius: var(--radius-card);
     padding: 16px;
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: all var(--transition-normal) ease;
   }
 
   .mini-card:hover {
@@ -308,7 +592,9 @@
     margin-bottom: 4px;
   }
 
-  /* ── Tables ──────────────────────────────────────────────────── */
+  /* ═══════════════════════════════════════════════════════════════════
+     TABLES
+     ═══════════════════════════════════════════════════════════════════ */
   table {
     width: 100%;
     border-collapse: collapse;
@@ -330,6 +616,13 @@
     background: var(--bg-surface);
     position: sticky;
     top: 0;
+    z-index: var(--z-sticky);
+    transition: box-shadow var(--transition-normal) ease;
+  }
+
+  /* ── Sticky header shadow on scroll ───────────────────────────── */
+  .table-wrap.scrolled th {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
   }
 
   td {
@@ -343,9 +636,85 @@
   .table-wrap {
     max-height: 500px;
     overflow: auto;
+    position: relative;
   }
 
-  /* ── Buttons ─────────────────────────────────────────────────── */
+  /* ── Column sorting arrows ────────────────────────────────────── */
+  th.sortable {
+    cursor: pointer;
+    user-select: none;
+    position: relative;
+    padding-right: 24px;
+  }
+
+  th.sortable:hover {
+    color: var(--text-secondary);
+  }
+
+  th.sortable::after {
+    content: '⇅';
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 10px;
+    color: var(--text-muted);
+    opacity: 0.4;
+  }
+
+  th.sortable.sort-asc::after {
+    content: '↑';
+    opacity: 1;
+    color: var(--neon-green);
+  }
+
+  th.sortable.sort-desc::after {
+    content: '↓';
+    opacity: 1;
+    color: var(--neon-green);
+  }
+
+  /* ── Table horizontal scroll — sticky first column ────────────── */
+  .table-scroll-x {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .table-scroll-x table {
+    min-width: max-content;
+  }
+
+  .table-scroll-x th:first-child,
+  .table-scroll-x td:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    background: var(--bg-surface);
+  }
+
+  .table-scroll-x td:first-child {
+    background: var(--bg-card);
+  }
+
+  .table-scroll-x tr:hover td:first-child {
+    background: var(--bg-hover);
+  }
+
+  .table-scroll-x th:first-child::after,
+  .table-scroll-x td:first-child::after {
+    content: '';
+    position: absolute;
+    right: -6px;
+    top: 0;
+    bottom: 0;
+    width: 6px;
+    background: linear-gradient(to right, rgba(0,0,0,0.15), transparent);
+    pointer-events: none;
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════
+     BUTTONS
+     ═══════════════════════════════════════════════════════════════════ */
   .btn {
     display: inline-flex;
     align-items: center;
@@ -357,7 +726,7 @@
     font-family: var(--sans);
     cursor: pointer;
     border: 1px solid transparent;
-    transition: all 0.2s ease;
+    transition: all var(--transition-normal) ease;
   }
 
   .btn-primary {
@@ -400,7 +769,167 @@
     background: rgba(239, 68, 68, 0.25);
   }
 
-  /* ── Forms ───────────────────────────────────────────────────── */
+  .btn-ghost {
+    background: transparent;
+    color: var(--text-secondary);
+    border: none;
+    padding: 6px 8px;
+  }
+
+  .btn-ghost:hover {
+    color: var(--text-primary);
+    background: var(--bg-hover);
+  }
+
+  /* ── Refresh button animation ─────────────────────────────────── */
+  .btn-refresh .icon {
+    display: inline-flex;
+    transition: none;
+  }
+
+  .btn-refresh.refreshing .icon {
+    animation: spin 0.8s linear infinite;
+  }
+
+  .btn-refresh.refreshing {
+    opacity: 0.7;
+    pointer-events: none;
+  }
+
+  /* ── Icon-only buttons (export, copy) ─────────────────────────── */
+  .btn-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border-radius: var(--radius-btn);
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 14px;
+    transition: all var(--transition-normal) ease;
+  }
+
+  .btn-icon:hover {
+    color: var(--text-primary);
+    background: var(--bg-hover);
+    border-color: var(--border-hover);
+  }
+
+  .btn-icon svg {
+    width: 14px;
+    height: 14px;
+  }
+
+  .btn-icon.btn-icon-sm {
+    width: 26px;
+    height: 26px;
+    font-size: 12px;
+  }
+
+  .btn-icon.btn-icon-sm svg {
+    width: 12px;
+    height: 12px;
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════
+     COPY BUTTON — appears on hover near code/values
+     ═══════════════════════════════════════════════════════════════════ */
+  .copy-wrapper {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .copy-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    margin-left: 6px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 11px;
+    opacity: 0;
+    transition: opacity var(--transition-fast) ease, color var(--transition-fast) ease;
+  }
+
+  .copy-wrapper:hover .copy-btn,
+  .copy-btn.visible {
+    opacity: 1;
+  }
+
+  .copy-btn:hover {
+    color: var(--neon-green);
+    border-color: var(--neon-green-border);
+  }
+
+  .copy-btn.copied {
+    color: var(--neon-green);
+    opacity: 1;
+  }
+
+  .copy-btn svg {
+    width: 12px;
+    height: 12px;
+  }
+
+  /* Code block copy button (top-right of pre/code) */
+  .code-block-wrapper {
+    position: relative;
+  }
+
+  .code-block-wrapper .copy-btn {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    opacity: 0;
+    z-index: 5;
+  }
+
+  .code-block-wrapper:hover .copy-btn {
+    opacity: 0.7;
+  }
+
+  .code-block-wrapper .copy-btn:hover {
+    opacity: 1;
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════
+     EXPORT BUTTONS
+     ═══════════════════════════════════════════════════════════════════ */
+  .export-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: 8px;
+  }
+
+  .export-group .btn-icon {
+    font-size: 10px;
+    font-weight: 600;
+    font-family: var(--mono);
+    width: auto;
+    padding: 0 8px;
+    height: 26px;
+  }
+
+  .export-group .btn-icon:hover {
+    border-color: var(--neon-green-border);
+    color: var(--neon-green);
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════
+     FORMS
+     ═══════════════════════════════════════════════════════════════════ */
   input, textarea, select {
     background: var(--bg-surface);
     color: var(--text-primary);
@@ -410,7 +939,7 @@
     font-size: 13px;
     font-family: var(--sans);
     width: 100%;
-    transition: border-color 0.2s ease;
+    transition: border-color var(--transition-normal) ease;
   }
 
   input:focus, textarea:focus, select:focus {
@@ -437,7 +966,44 @@
   .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
   .form-row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
 
-  /* ── Badges ──────────────────────────────────────────────────── */
+  /* ── Table search input (explorer panel) ──────────────────────── */
+  .table-search-wrapper {
+    position: relative;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .table-search-wrapper input {
+    padding-left: 32px;
+    font-size: 12px;
+    background: var(--bg-deepest);
+    border-color: transparent;
+  }
+
+  .table-search-wrapper input:focus {
+    border-color: var(--neon-green-border);
+    background: var(--bg-surface);
+  }
+
+  .table-search-wrapper .search-icon {
+    position: absolute;
+    left: 20px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 14px;
+    height: 14px;
+    color: var(--text-muted);
+    pointer-events: none;
+  }
+
+  .table-search-wrapper input::placeholder {
+    color: var(--text-muted);
+    font-size: 12px;
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════
+     BADGES
+     ═══════════════════════════════════════════════════════════════════ */
   .badge {
     display: inline-block;
     padding: 2px 8px;
@@ -461,7 +1027,38 @@
   .badge-pk { background: rgba(168,85,247,0.15); color: var(--purple); }
   .badge-null { background: rgba(107,107,115,0.15); color: var(--text-muted); }
 
-  /* ── Status dots ─────────────────────────────────────────────── */
+  /* ── Row count badges (pill next to table names) ──────────────── */
+  .row-count-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 28px;
+    height: 20px;
+    padding: 0 7px;
+    border-radius: 10px;
+    background: var(--bg-deepest);
+    border: 1px solid var(--border);
+    font-size: 10px;
+    font-weight: 600;
+    font-family: var(--mono);
+    color: var(--text-muted);
+    transition: all var(--transition-fast) ease;
+  }
+
+  .table-list li.active .row-count-badge {
+    background: var(--neon-green-glow);
+    border-color: var(--neon-green-border);
+    color: var(--neon-green);
+  }
+
+  .table-list li:hover .row-count-badge {
+    border-color: var(--border-hover);
+    color: var(--text-secondary);
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════
+     STATUS DOTS
+     ═══════════════════════════════════════════════════════════════════ */
   .status-dot-inline {
     display: inline-block;
     width: 8px;
@@ -476,7 +1073,9 @@
   .status-dot-inline.error { background: var(--red); }
   .status-dot-inline.unknown { background: var(--text-muted); }
 
-  /* ── Results / Code ──────────────────────────────────────────── */
+  /* ═══════════════════════════════════════════════════════════════════
+     RESULTS / CODE
+     ═══════════════════════════════════════════════════════════════════ */
   .result {
     background: var(--bg-deepest);
     border: 1px solid var(--border);
@@ -494,7 +1093,9 @@
   .result.error { border-color: var(--red); color: var(--red); }
   .result.success { border-color: var(--neon-green-border); }
 
-  /* ── Explorer layout ─────────────────────────────────────────── */
+  /* ═══════════════════════════════════════════════════════════════════
+     EXPLORER LAYOUT
+     ═══════════════════════════════════════════════════════════════════ */
   .explorer-layout {
     display: grid;
     grid-template-columns: 280px 1fr;
@@ -510,7 +1111,7 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    transition: all 0.15s ease;
+    transition: all var(--transition-fast) ease;
     font-size: 13px;
   }
 
@@ -527,7 +1128,9 @@
     font-family: var(--mono);
   }
 
-  /* ── Tool categories ─────────────────────────────────────────── */
+  /* ═══════════════════════════════════════════════════════════════════
+     TOOL CATEGORIES
+     ═══════════════════════════════════════════════════════════════════ */
   .tool-category {
     margin-bottom: 20px;
   }
@@ -552,7 +1155,7 @@
   .tool-category-header .arrow {
     font-size: 10px;
     color: var(--text-muted);
-    transition: transform 0.2s ease;
+    transition: transform var(--transition-normal) ease;
   }
 
   .tool-category-header .arrow.collapsed {
@@ -579,7 +1182,7 @@
     border-radius: var(--radius-btn);
     padding: 14px 16px;
     margin-bottom: 10px;
-    transition: all 0.2s ease;
+    transition: all var(--transition-normal) ease;
   }
 
   .tool-card:hover {
@@ -612,7 +1215,9 @@
     border-radius: 6px;
   }
 
-  /* ── Docs ────────────────────────────────────────────────────── */
+  /* ═══════════════════════════════════════════════════════════════════
+     DOCS
+     ═══════════════════════════════════════════════════════════════════ */
   .docs h3 {
     font-size: 16px;
     margin: 24px 0 10px 0;
@@ -670,7 +1275,9 @@
     margin-right: 8px;
   }
 
-  /* ── Profiler bar ────────────────────────────────────────────── */
+  /* ═══════════════════════════════════════════════════════════════════
+     PROFILER BAR
+     ═══════════════════════════════════════════════════════════════════ */
   .null-bar {
     display: inline-block;
     height: 8px;
@@ -681,7 +1288,9 @@
     vertical-align: middle;
   }
 
-  /* ── Loading / Empty ─────────────────────────────────────────── */
+  /* ═══════════════════════════════════════════════════════════════════
+     LOADING / SPINNER / EMPTY STATES
+     ═══════════════════════════════════════════════════════════════════ */
   .spinner {
     display: inline-block;
     width: 16px;
@@ -706,7 +1315,147 @@
     opacity: 0.4;
   }
 
-  /* ── Toggle switch ───────────────────────────────────────────── */
+  /* ── Enhanced empty states ────────────────────────────────────── */
+  .empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 48px 24px;
+    text-align: center;
+  }
+
+  .empty-state .empty-icon {
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 16px;
+    color: var(--text-muted);
+  }
+
+  .empty-state .empty-icon svg {
+    width: 28px;
+    height: 28px;
+    opacity: 0.5;
+  }
+
+  .empty-state .empty-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 6px;
+  }
+
+  .empty-state .empty-desc {
+    font-size: 13px;
+    color: var(--text-muted);
+    max-width: 320px;
+    line-height: 1.6;
+    margin-bottom: 16px;
+  }
+
+  .empty-state .empty-cta {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 18px;
+    border-radius: var(--radius-btn);
+    background: var(--neon-green-glow);
+    border: 1px solid var(--neon-green-border);
+    color: var(--neon-green);
+    font-size: 13px;
+    font-weight: 500;
+    font-family: var(--sans);
+    cursor: pointer;
+    transition: all var(--transition-normal) ease;
+  }
+
+  .empty-state .empty-cta:hover {
+    background: var(--neon-green);
+    color: var(--bg-deepest);
+    box-shadow: var(--glow-green);
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════
+     SKELETON LOADING
+     ═══════════════════════════════════════════════════════════════════ */
+  @keyframes skeleton-pulse {
+    0%   { opacity: 0.4; }
+    50%  { opacity: 0.7; }
+    100% { opacity: 0.4; }
+  }
+
+  .skeleton {
+    background: var(--bg-hover);
+    border-radius: 4px;
+    animation: skeleton-pulse 1.5s ease-in-out infinite;
+  }
+
+  .skeleton-text {
+    height: 14px;
+    margin-bottom: 8px;
+    border-radius: 4px;
+  }
+
+  .skeleton-text.short { width: 40%; }
+  .skeleton-text.medium { width: 65%; }
+  .skeleton-text.long { width: 90%; }
+
+  .skeleton-heading {
+    height: 22px;
+    width: 50%;
+    margin-bottom: 16px;
+    border-radius: 4px;
+  }
+
+  .skeleton-row {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+
+  .skeleton-cell {
+    height: 36px;
+    flex: 1;
+    border-radius: 4px;
+  }
+
+  .skeleton-avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .skeleton-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-card);
+    padding: 18px;
+    margin-bottom: 16px;
+  }
+
+  .skeleton-table-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr 0.5fr;
+    gap: 12px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .skeleton-table-cell {
+    height: 14px;
+    border-radius: 4px;
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════
+     TOGGLE SWITCH
+     ═══════════════════════════════════════════════════════════════════ */
   .toggle-wrap {
     display: flex;
     align-items: center;
@@ -727,7 +1476,7 @@
     top: 0; left: 0; right: 0; bottom: 0;
     background: var(--border);
     border-radius: 10px;
-    transition: background 0.2s ease;
+    transition: background var(--transition-normal) ease;
   }
 
   .toggle .slider::before {
@@ -739,7 +1488,7 @@
     background: var(--text-primary);
     top: 2px;
     left: 2px;
-    transition: transform 0.2s ease;
+    transition: transform var(--transition-normal) ease;
   }
 
   .toggle input:checked + .slider {
@@ -750,29 +1499,1300 @@
     transform: translateX(18px);
   }
 
-  /* ── Responsive ──────────────────────────────────────────────── */
+  /* ═══════════════════════════════════════════════════════════════════
+     TOAST NOTIFICATIONS
+     ═══════════════════════════════════════════════════════════════════ */
+  .toast-container {
+    position: fixed;
+    bottom: var(--toast-offset);
+    right: var(--toast-offset);
+    z-index: var(--z-toast);
+    display: flex;
+    flex-direction: column-reverse;
+    gap: 8px;
+    pointer-events: none;
+    max-width: 400px;
+  }
+
+  .toast {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 12px 16px;
+    border-radius: var(--radius-btn);
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-lg);
+    font-size: 13px;
+    color: var(--text-primary);
+    pointer-events: auto;
+    animation: toastIn var(--transition-slow) ease forwards;
+    min-width: 280px;
+    max-width: 400px;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+
+  .toast.dismissing {
+    animation: toastOut var(--transition-slow) ease forwards;
+  }
+
+  @keyframes toastIn {
+    from {
+      opacity: 0;
+      transform: translateX(100%);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+
+  @keyframes toastOut {
+    from {
+      opacity: 1;
+      transform: translateX(0);
+    }
+    to {
+      opacity: 0;
+      transform: translateX(100%);
+    }
+  }
+
+  .toast-icon {
+    flex-shrink: 0;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    font-weight: 700;
+    margin-top: 1px;
+  }
+
+  .toast-body {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .toast-title {
+    font-weight: 600;
+    font-size: 13px;
+    margin-bottom: 2px;
+  }
+
+  .toast-message {
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.4;
+    word-break: break-word;
+  }
+
+  .toast-close {
+    flex-shrink: 0;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 16px;
+    padding: 0 2px;
+    line-height: 1;
+    transition: color var(--transition-fast) ease;
+  }
+
+  .toast-close:hover {
+    color: var(--text-primary);
+  }
+
+  .toast-progress {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    height: 3px;
+    border-radius: 0 0 var(--radius-btn) var(--radius-btn);
+    animation: toastProgress linear forwards;
+  }
+
+  @keyframes toastProgress {
+    from { width: 100%; }
+    to   { width: 0%; }
+  }
+
+  /* Toast type variants */
+  .toast.toast-success {
+    border-left: 3px solid var(--neon-green);
+  }
+
+  .toast.toast-success .toast-icon {
+    background: var(--neon-green-glow);
+    color: var(--neon-green);
+  }
+
+  .toast.toast-success .toast-progress {
+    background: var(--neon-green);
+  }
+
+  .toast.toast-error {
+    border-left: 3px solid var(--red);
+  }
+
+  .toast.toast-error .toast-icon {
+    background: rgba(239, 68, 68, 0.15);
+    color: var(--red);
+  }
+
+  .toast.toast-error .toast-progress {
+    background: var(--red);
+  }
+
+  .toast.toast-info {
+    border-left: 3px solid var(--blue);
+  }
+
+  .toast.toast-info .toast-icon {
+    background: rgba(59, 130, 246, 0.15);
+    color: var(--blue);
+  }
+
+  .toast.toast-info .toast-progress {
+    background: var(--blue);
+  }
+
+  .toast.toast-warning {
+    border-left: 3px solid var(--yellow);
+  }
+
+  .toast.toast-warning .toast-icon {
+    background: rgba(245, 158, 11, 0.15);
+    color: var(--yellow);
+  }
+
+  .toast.toast-warning .toast-progress {
+    background: var(--yellow);
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════
+     CONFIRMATION MODAL
+     ═══════════════════════════════════════════════════════════════════ */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: var(--z-modal);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--overlay-bg);
+    backdrop-filter: blur(var(--backdrop-blur));
+    -webkit-backdrop-filter: blur(var(--backdrop-blur));
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity var(--transition-normal) ease, visibility var(--transition-normal) ease;
+  }
+
+  .modal-overlay.visible,
+  .modal-overlay.active {
+    opacity: 1;
+    visibility: visible;
+  }
+
+  .modal {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-lg);
+    max-width: 440px;
+    width: 90%;
+    padding: 24px;
+    transform: scale(0.95) translateY(10px);
+    transition: transform var(--transition-normal) ease;
+  }
+
+  .modal-overlay.visible .modal,
+  .modal-overlay.active .modal {
+    transform: scale(1) translateY(0);
+  }
+
+  .modal-title {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: 8px;
+  }
+
+  .modal-message {
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.6;
+    margin-bottom: 20px;
+  }
+
+  .modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+  }
+
+  .modal-actions .btn {
+    min-width: 80px;
+    justify-content: center;
+  }
+
+  /* Danger modal variant */
+  .modal.modal-danger .modal-title {
+    color: var(--red);
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════
+     COMMAND PALETTE (Cmd+K)
+     ═══════════════════════════════════════════════════════════════════ */
+  .command-palette-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: var(--z-command-palette);
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding-top: 15vh;
+    background: var(--overlay-bg);
+    backdrop-filter: blur(var(--backdrop-blur));
+    -webkit-backdrop-filter: blur(var(--backdrop-blur));
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity var(--transition-fast) ease, visibility var(--transition-fast) ease;
+  }
+
+  .command-palette-overlay.visible,
+  .command-palette-overlay.active {
+    opacity: 1;
+    visibility: visible;
+  }
+
+  .command-palette {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-lg);
+    width: 560px;
+    max-width: 90vw;
+    max-height: 420px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    transform: scale(0.96) translateY(-10px);
+    transition: transform var(--transition-fast) ease;
+  }
+
+  .command-palette-overlay.visible .command-palette,
+  .command-palette-overlay.active .command-palette {
+    transform: scale(1) translateY(0);
+  }
+
+  .command-palette-input-wrap {
+    display: flex;
+    align-items: center;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    gap: 10px;
+  }
+
+  .command-palette-input-wrap .search-icon {
+    width: 18px;
+    height: 18px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+  }
+
+  .command-palette-input-wrap input {
+    flex: 1;
+    border: none;
+    background: transparent;
+    padding: 4px 0;
+    font-size: 15px;
+    color: var(--text-primary);
+    outline: none;
+    box-shadow: none;
+  }
+
+  .command-palette-input-wrap input::placeholder {
+    color: var(--text-muted);
+  }
+
+  .command-palette-input-wrap input:focus {
+    border: none;
+    box-shadow: none;
+  }
+
+  .command-palette-input-wrap .kbd {
+    font-size: 10px;
+    font-family: var(--sans);
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 2px 6px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+  }
+
+  .command-palette-results {
+    flex: 1;
+    overflow-y: auto;
+    padding: 6px;
+  }
+
+  .command-palette-group-label {
+    padding: 8px 10px 4px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+  }
+
+  .command-palette-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border-radius: var(--radius-btn);
+    cursor: pointer;
+    transition: background var(--transition-fast) ease;
+  }
+
+  .command-palette-item:hover,
+  .command-palette-item.selected {
+    background: var(--bg-hover);
+  }
+
+  .command-palette-item.selected {
+    border-left: 2px solid var(--neon-green);
+  }
+
+  .command-palette-item .cp-icon {
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    color: var(--text-muted);
+  }
+
+  .command-palette-item .cp-icon svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  .command-palette-item .cp-text {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .command-palette-item .cp-title {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .command-palette-item .cp-desc {
+    font-size: 11px;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .command-palette-item .cp-shortcut {
+    display: flex;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+
+  .command-palette-item .cp-shortcut kbd {
+    font-size: 10px;
+    font-family: var(--sans);
+    background: var(--bg-deepest);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 1px 5px;
+    color: var(--text-muted);
+  }
+
+  .command-palette-empty {
+    padding: 32px 16px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 13px;
+  }
+
+  .command-palette-footer {
+    padding: 8px 12px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .command-palette-footer .hint {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .command-palette-footer kbd {
+    font-size: 10px;
+    font-family: var(--sans);
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 1px 5px;
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════
+     KEYBOARD SHORTCUTS OVERLAY
+     ═══════════════════════════════════════════════════════════════════ */
+  .shortcuts-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: var(--z-modal);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--overlay-bg);
+    backdrop-filter: blur(var(--backdrop-blur));
+    -webkit-backdrop-filter: blur(var(--backdrop-blur));
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity var(--transition-normal) ease, visibility var(--transition-normal) ease;
+  }
+
+  .shortcuts-overlay.visible,
+  .shortcuts-overlay.active {
+    opacity: 1;
+    visibility: visible;
+  }
+
+  .shortcuts-panel {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-lg);
+    width: 600px;
+    max-width: 90vw;
+    max-height: 80vh;
+    overflow-y: auto;
+    padding: 24px;
+    transform: scale(0.95);
+    transition: transform var(--transition-normal) ease;
+  }
+
+  .shortcuts-overlay.visible .shortcuts-panel,
+  .shortcuts-overlay.active .shortcuts-panel {
+    transform: scale(1);
+  }
+
+  .shortcuts-title {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .shortcuts-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+
+  .shortcuts-section h4 {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    margin-bottom: 10px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .shortcut-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 0;
+    font-size: 13px;
+  }
+
+  .shortcut-row .shortcut-desc {
+    color: var(--text-secondary);
+  }
+
+  .shortcut-row .shortcut-keys {
+    display: flex;
+    gap: 4px;
+  }
+
+  .shortcut-row kbd {
+    font-size: 11px;
+    font-family: var(--sans);
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 2px 8px;
+    color: var(--text-primary);
+    min-width: 24px;
+    text-align: center;
+    font-weight: 500;
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════
+     QUERY HISTORY PANEL
+     ═══════════════════════════════════════════════════════════════════ */
+  .query-layout {
+    display: flex;
+    gap: 16px;
+  }
+
+  .query-history-panel {
+    width: 260px;
+    flex-shrink: 0;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-card);
+    overflow: hidden;
+    transition: width var(--transition-slow) ease, opacity var(--transition-slow) ease;
+    display: flex;
+    flex-direction: column;
+    max-height: 600px;
+  }
+
+  .query-history-panel.collapsed {
+    width: 0;
+    border: none;
+    opacity: 0;
+    overflow: hidden;
+    padding: 0;
+    margin: 0;
+  }
+
+  .query-history-header {
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+  }
+
+  .query-history-header h3 {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .query-history-list {
+    flex: 1;
+    overflow-y: auto;
+    list-style: none;
+  }
+
+  .query-history-item {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    transition: background var(--transition-fast) ease;
+  }
+
+  .query-history-item:hover {
+    background: var(--bg-hover);
+  }
+
+  .query-history-item .qh-sql {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-bottom: 3px;
+  }
+
+  .query-history-item .qh-meta {
+    display: flex;
+    justify-content: space-between;
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+
+  .query-history-item .qh-meta .qh-time {
+    font-family: var(--mono);
+  }
+
+  .query-history-item .qh-meta .qh-rows {
+    color: var(--neon-green);
+  }
+
+  .query-history-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    color: var(--text-muted);
+    cursor: pointer;
+    background: none;
+    border: none;
+    font-family: var(--sans);
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: all var(--transition-fast) ease;
+  }
+
+  .query-history-toggle:hover {
+    color: var(--text-primary);
+    background: var(--bg-hover);
+  }
+
+  .query-main {
+    flex: 1;
+    min-width: 0;
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════
+     CONNECTION STRING PANEL (tabbed)
+     ═══════════════════════════════════════════════════════════════════ */
+  .conn-string-panel {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-card);
+    overflow: hidden;
+  }
+
+  .conn-string-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-surface);
+  }
+
+  .conn-string-tab {
+    padding: 10px 18px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-muted);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all var(--transition-fast) ease;
+    background: none;
+    border-top: none;
+    border-left: none;
+    border-right: none;
+    font-family: var(--sans);
+  }
+
+  .conn-string-tab:hover {
+    color: var(--text-primary);
+    background: var(--bg-hover);
+  }
+
+  .conn-string-tab.active {
+    color: var(--neon-green);
+    border-bottom-color: var(--neon-green);
+  }
+
+  .conn-string-body {
+    padding: 16px;
+  }
+
+  .conn-string-value {
+    font-family: var(--mono);
+    font-size: 12px;
+    background: var(--bg-deepest);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-btn);
+    padding: 12px;
+    word-break: break-all;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    position: relative;
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════
+     DARK/LIGHT THEME TOGGLE
+     ═══════════════════════════════════════════════════════════════════ */
+  .theme-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: var(--radius-btn);
+    background: transparent;
+    border: 1px solid var(--border);
+    cursor: pointer;
+    color: var(--text-secondary);
+    transition: all var(--transition-normal) ease;
+  }
+
+  .theme-toggle:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+    border-color: var(--border-hover);
+  }
+
+  .theme-toggle svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  .theme-toggle .icon-sun,
+  .theme-toggle .icon-moon { display: none; }
+
+  [data-theme="dark"] .theme-toggle .icon-sun { display: block; }
+  [data-theme="dark"] .theme-toggle .icon-moon { display: none; }
+  [data-theme="light"] .theme-toggle .icon-sun { display: none; }
+  [data-theme="light"] .theme-toggle .icon-moon { display: block; }
+
+  /* ═══════════════════════════════════════════════════════════════════
+     RESPONSIVE DESIGN
+     ═══════════════════════════════════════════════════════════════════ */
+
+  /* ── Hamburger menu button (mobile) ───────────────────────────── */
+  .hamburger-btn {
+    display: none;
+    position: fixed;
+    top: 12px;
+    left: 12px;
+    z-index: 250;
+    width: 40px;
+    height: 40px;
+    border-radius: var(--radius-btn);
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    cursor: pointer;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-primary);
+    box-shadow: var(--shadow-md);
+  }
+
+  .hamburger-btn svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  /* Mobile overlay behind sidebar */
+  .sidebar-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 199;
+  }
+
+  .sidebar-overlay.active {
+    display: block;
+  }
+
+  /* ── Desktop large (>1400px) ──────────────────────────────────── */
+  @media (min-width: 1400px) {
+    .container {
+      max-width: 1400px;
+    }
+  }
+
+  /* ── Tablet / small desktop (<=1024px) ────────────────────────── */
+  @media (max-width: 1024px) {
+    .container {
+      padding: 24px 20px;
+    }
+
+    .explorer-layout {
+      grid-template-columns: 240px 1fr;
+    }
+
+    .card-grid {
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    }
+
+    .shortcuts-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .query-history-panel {
+      width: 220px;
+    }
+  }
+
+  /* ── Tablet (<=900px) ─────────────────────────────────────────── */
   @media (max-width: 900px) {
-    .sidebar { width: 60px; }
+    .sidebar { width: var(--sidebar-collapsed-width); }
     .sidebar-header, .sidebar-footer, .nav-section-label { display: none; }
     .nav-item span { display: none; }
     .nav-item { justify-content: center; padding: 12px 0; }
-    .main { margin-left: 60px; }
+    .main { margin-left: var(--sidebar-collapsed-width); }
     .explorer-layout { grid-template-columns: 1fr; }
     .form-row, .form-row-3 { grid-template-columns: 1fr; }
+
+    .query-history-panel {
+      display: none;
+    }
+
+    .sidebar-collapse-btn {
+      display: none;
+    }
+  }
+
+  /* ── Mobile (<=640px) ─────────────────────────────────────────── */
+  @media (max-width: 640px) {
+    .hamburger-btn {
+      display: flex;
+    }
+
+    .sidebar {
+      transform: translateX(-100%);
+      width: var(--sidebar-width);
+      transition: transform var(--transition-slow) ease;
+    }
+
+    .sidebar.mobile-open {
+      transform: translateX(0);
+    }
+
+    /* Restore full sidebar styles on mobile when open */
+    .sidebar.mobile-open .sidebar-header,
+    .sidebar.mobile-open .sidebar-footer,
+    .sidebar.mobile-open .nav-section-label {
+      display: block;
+    }
+
+    .sidebar.mobile-open .nav-item {
+      justify-content: flex-start;
+      padding: 8px 16px;
+    }
+
+    .sidebar.mobile-open .nav-item span {
+      display: inline;
+    }
+
+    .main {
+      margin-left: 0;
+    }
+
+    .container {
+      padding: 60px 16px 24px;
+    }
+
+    .page-title {
+      font-size: 18px;
+    }
+
+    .card-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .command-palette {
+      width: 95vw;
+      max-height: 70vh;
+    }
+
+    .modal {
+      width: 95%;
+      padding: 20px;
+    }
+
+    .toast-container {
+      left: var(--toast-offset);
+      right: var(--toast-offset);
+      max-width: none;
+    }
+
+    .toast {
+      min-width: 0;
+      max-width: none;
+    }
+
+    .shortcuts-panel {
+      width: 95vw;
+      padding: 16px;
+    }
+
+    .shortcuts-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .conn-string-tabs {
+      overflow-x: auto;
+    }
+
+    .conn-string-tab {
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════
+     UTILITY CLASSES
+     ═══════════════════════════════════════════════════════════════════ */
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
+  }
+
+  .truncate {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .flex-center {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .gap-sm { gap: 4px; }
+  .gap-md { gap: 8px; }
+  .gap-lg { gap: 16px; }
+
+  .mt-sm { margin-top: 8px; }
+  .mt-md { margin-top: 16px; }
+  .mt-lg { margin-top: 24px; }
+  .mb-sm { margin-bottom: 8px; }
+  .mb-md { margin-bottom: 16px; }
+  .mb-lg { margin-bottom: 24px; }
+
+  /* ═══════════════════════════════════════════════════════════════════
+     HIGHLIGHT.JS OVERRIDES — match Neon theme
+     ═══════════════════════════════════════════════════════════════════ */
+  .hljs {
+    background: var(--bg-deepest) !important;
+    color: var(--text-secondary) !important;
+    border-radius: var(--radius-btn);
+    padding: 14px !important;
+    font-family: var(--mono) !important;
+    font-size: 12px !important;
+    line-height: 1.5 !important;
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════
+     SCROLLBAR — consistent across browsers
+     ═══════════════════════════════════════════════════════════════════ */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--border-hover);
+  }
+
+  /* Firefox */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════
+     FOCUS-VISIBLE — keyboard navigation aid
+     ═══════════════════════════════════════════════════════════════════ */
+  :focus-visible {
+    outline: 2px solid var(--neon-green-border);
+    outline-offset: 2px;
+  }
+
+  button:focus-visible {
+    outline: 2px solid var(--neon-green-border);
+    outline-offset: 2px;
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════
+     SELECTION
+     ═══════════════════════════════════════════════════════════════════ */
+  ::selection {
+    background: var(--neon-green-glow);
+    color: var(--text-primary);
   }
 </style>
 </head>
 <body>
 
+<!-- ════════════════════ OVERLAY ELEMENTS ════════════════════ -->
+
+<!-- Toast notification container -->
+<div id="toastContainer" class="toast-container"></div>
+
+<!-- Confirmation modal -->
+<div id="modalOverlay" class="modal-overlay">
+  <div class="modal" id="modalDialog">
+    <div class="modal-title" id="modalTitle">Confirm Action</div>
+    <div class="modal-message" id="modalMessage">Are you sure you want to proceed?</div>
+    <div class="modal-actions">
+      <button class="btn btn-secondary" id="modalCancel" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-danger" id="modalConfirm" onclick="confirmModal()">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<!-- Command palette (Cmd+K) -->
+<div id="commandPalette" class="command-palette-overlay">
+  <div class="command-palette">
+    <div class="command-palette-input-wrap">
+      <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+      <input type="text" id="commandPaletteInput" placeholder="Type a command or search..." autocomplete="off" spellcheck="false" aria-label="Command palette search">
+      <span class="kbd">ESC</span>
+    </div>
+    <div class="command-palette-results" id="commandPaletteResults">
+      <div class="command-palette-group-label">Navigation</div>
+      <div class="command-palette-item" data-action="nav:explorer">
+        <div class="cp-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+        </div>
+        <div class="cp-text">
+          <div class="cp-title">Database Explorer</div>
+          <div class="cp-desc">Browse tables, schemas, and sample data</div>
+        </div>
+        <div class="cp-shortcut"><kbd>1</kbd></div>
+      </div>
+      <div class="command-palette-item" data-action="nav:query">
+        <div class="cp-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+        </div>
+        <div class="cp-text">
+          <div class="cp-title">SQL Query</div>
+          <div class="cp-desc">Execute read-only SQL queries</div>
+        </div>
+        <div class="cp-shortcut"><kbd>2</kbd></div>
+      </div>
+      <div class="command-palette-item" data-action="nav:tools">
+        <div class="cp-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+        </div>
+        <div class="cp-text">
+          <div class="cp-title">MCP Tools</div>
+          <div class="cp-desc">Browse and test 34 MCP tools</div>
+        </div>
+        <div class="cp-shortcut"><kbd>3</kbd></div>
+      </div>
+      <div class="command-palette-item" data-action="nav:projects">
+        <div class="cp-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+        </div>
+        <div class="cp-text">
+          <div class="cp-title">Projects</div>
+          <div class="cp-desc">Lakebase instances in this workspace</div>
+        </div>
+        <div class="cp-shortcut"><kbd>4</kbd></div>
+      </div>
+      <div class="command-palette-item" data-action="nav:branches">
+        <div class="cp-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+        </div>
+        <div class="cp-text">
+          <div class="cp-title">Branches</div>
+          <div class="cp-desc">Manage database branches</div>
+        </div>
+        <div class="cp-shortcut"><kbd>5</kbd></div>
+      </div>
+      <div class="command-palette-item" data-action="nav:endpoints">
+        <div class="cp-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+        </div>
+        <div class="cp-text">
+          <div class="cp-title">Endpoints</div>
+          <div class="cp-desc">Compute endpoints and autoscaling</div>
+        </div>
+        <div class="cp-shortcut"><kbd>6</kbd></div>
+      </div>
+      <div class="command-palette-item" data-action="nav:profiler">
+        <div class="cp-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg>
+        </div>
+        <div class="cp-text">
+          <div class="cp-title">Data Profiler</div>
+          <div class="cp-desc">Column-level data profiling</div>
+        </div>
+        <div class="cp-shortcut"><kbd>7</kbd></div>
+      </div>
+      <div class="command-palette-item" data-action="nav:docs">
+        <div class="cp-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+        </div>
+        <div class="cp-text">
+          <div class="cp-title">Documentation</div>
+          <div class="cp-desc">Deployment guide, API reference, gotchas</div>
+        </div>
+        <div class="cp-shortcut"><kbd>8</kbd></div>
+      </div>
+      <div class="command-palette-group-label">Actions</div>
+      <div class="command-palette-item" data-action="action:refresh">
+        <div class="cp-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+        </div>
+        <div class="cp-text">
+          <div class="cp-title">Refresh Current Page</div>
+          <div class="cp-desc">Reload data for the active page</div>
+        </div>
+        <div class="cp-shortcut"><kbd>R</kbd></div>
+      </div>
+      <div class="command-palette-item" data-action="action:theme">
+        <div class="cp-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+        </div>
+        <div class="cp-text">
+          <div class="cp-title">Toggle Theme</div>
+          <div class="cp-desc">Switch between dark and light mode</div>
+        </div>
+        <div class="cp-shortcut"><kbd>T</kbd></div>
+      </div>
+      <div class="command-palette-item" data-action="action:shortcuts">
+        <div class="cp-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10"/></svg>
+        </div>
+        <div class="cp-text">
+          <div class="cp-title">Keyboard Shortcuts</div>
+          <div class="cp-desc">View all keyboard shortcuts</div>
+        </div>
+        <div class="cp-shortcut"><kbd>?</kbd></div>
+      </div>
+    </div>
+    <div class="command-palette-footer">
+      <span class="hint"><kbd>&uarr;</kbd><kbd>&darr;</kbd> Navigate</span>
+      <span class="hint"><kbd>Enter</kbd> Select</span>
+      <span class="hint"><kbd>ESC</kbd> Close</span>
+    </div>
+  </div>
+</div>
+
+<!-- Keyboard shortcuts overlay -->
+<div id="shortcutsOverlay" class="shortcuts-overlay">
+  <div class="shortcuts-panel">
+    <div class="shortcuts-title">
+      <span>Keyboard Shortcuts</span>
+      <button class="btn-ghost" onclick="closeShortcuts()" title="Close" style="font-size:18px;">&times;</button>
+    </div>
+    <div class="shortcuts-grid">
+      <div class="shortcuts-section">
+        <h4>Navigation</h4>
+        <div class="shortcut-row">
+          <span class="shortcut-desc">Command Palette</span>
+          <div class="shortcut-keys"><kbd>Cmd</kbd><kbd>K</kbd></div>
+        </div>
+        <div class="shortcut-row">
+          <span class="shortcut-desc">Explorer</span>
+          <div class="shortcut-keys"><kbd>1</kbd></div>
+        </div>
+        <div class="shortcut-row">
+          <span class="shortcut-desc">SQL Query</span>
+          <div class="shortcut-keys"><kbd>2</kbd></div>
+        </div>
+        <div class="shortcut-row">
+          <span class="shortcut-desc">MCP Tools</span>
+          <div class="shortcut-keys"><kbd>3</kbd></div>
+        </div>
+        <div class="shortcut-row">
+          <span class="shortcut-desc">Projects</span>
+          <div class="shortcut-keys"><kbd>4</kbd></div>
+        </div>
+        <div class="shortcut-row">
+          <span class="shortcut-desc">Branches</span>
+          <div class="shortcut-keys"><kbd>5</kbd></div>
+        </div>
+        <div class="shortcut-row">
+          <span class="shortcut-desc">Endpoints</span>
+          <div class="shortcut-keys"><kbd>6</kbd></div>
+        </div>
+        <div class="shortcut-row">
+          <span class="shortcut-desc">Profiler</span>
+          <div class="shortcut-keys"><kbd>7</kbd></div>
+        </div>
+        <div class="shortcut-row">
+          <span class="shortcut-desc">Documentation</span>
+          <div class="shortcut-keys"><kbd>8</kbd></div>
+        </div>
+      </div>
+      <div class="shortcuts-section">
+        <h4>Actions</h4>
+        <div class="shortcut-row">
+          <span class="shortcut-desc">Run SQL Query</span>
+          <div class="shortcut-keys"><kbd>Ctrl</kbd><kbd>Enter</kbd></div>
+        </div>
+        <div class="shortcut-row">
+          <span class="shortcut-desc">Refresh Page</span>
+          <div class="shortcut-keys"><kbd>R</kbd></div>
+        </div>
+        <div class="shortcut-row">
+          <span class="shortcut-desc">Toggle Theme</span>
+          <div class="shortcut-keys"><kbd>T</kbd></div>
+        </div>
+        <div class="shortcut-row">
+          <span class="shortcut-desc">Toggle Sidebar</span>
+          <div class="shortcut-keys"><kbd>[</kbd></div>
+        </div>
+        <div class="shortcut-row">
+          <span class="shortcut-desc">Toggle History</span>
+          <div class="shortcut-keys"><kbd>H</kbd></div>
+        </div>
+        <div class="shortcut-row">
+          <span class="shortcut-desc">Show Shortcuts</span>
+          <div class="shortcut-keys"><kbd>?</kbd></div>
+        </div>
+        <div class="shortcut-row">
+          <span class="shortcut-desc">Close Overlay</span>
+          <div class="shortcut-keys"><kbd>ESC</kbd></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Mobile hamburger button -->
+<button class="hamburger-btn" id="hamburgerBtn" onclick="toggleMobileSidebar()" aria-label="Toggle navigation">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+</button>
+
+<!-- Mobile sidebar overlay -->
+<div class="sidebar-overlay" id="sidebarOverlay" onclick="closeMobileSidebar()"></div>
+
 <!-- ════════════════════ SIDEBAR ════════════════════ -->
-<aside class="sidebar">
+<aside class="sidebar" id="sidebar">
   <div class="sidebar-header">
     <div class="sidebar-brand">
       <div class="brand-dot" id="brandDot"></div>
       <h1>Lakebase MCP</h1>
+      <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="Toggle theme">
+        <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+        <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+      </button>
     </div>
     <div id="instanceLabel" class="instance-label" title="Current Lakebase instance"></div>
-    <select id="dbSelect" class="sidebar-db-select" onchange="switchDatabase()" title="Switch database">
+    <select id="dbSelect" class="sidebar-db-select" onchange="switchDatabase()" title="Switch database" aria-label="Switch database">
       <option value="">Loading...</option>
     </select>
   </div>
@@ -822,23 +2842,63 @@
   <div class="sidebar-footer">
     <div class="status-row">
       <span class="status-dot" id="statusDot"></span>
-      <span id="statusText">Connecting...</span>
+      <span class="status-text" id="statusText">Connecting...</span>
+    </div>
+    <div class="status-details" id="statusDetails">
+      <div class="status-detail-row">
+        <span class="detail-label">Instance</span>
+        <span class="detail-value" id="statusInstance">--</span>
+      </div>
+      <div class="status-detail-row">
+        <span class="detail-label">Database</span>
+        <span class="detail-value" id="statusDatabase">--</span>
+      </div>
+      <div class="status-detail-row">
+        <span class="detail-label">Latency</span>
+        <span class="detail-value latency-badge" id="statusLatency">--</span>
+      </div>
     </div>
   </div>
+
+  <button class="sidebar-collapse-btn" id="sidebarCollapseBtn" onclick="toggleSidebar()" title="Collapse sidebar">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+    <span class="collapse-label">Collapse</span>
+  </button>
 </aside>
 
 <!-- ════════════════════ MAIN CONTENT ════════════════════ -->
 <div class="main">
   <div class="container">
 
+    <!-- Breadcrumbs -->
+    <div class="breadcrumbs" id="breadcrumbs">
+      <span class="breadcrumb-link" onclick="navigateTo('explorer')">Home</span>
+      <span class="breadcrumb-sep">/</span>
+      <span class="breadcrumb-current" id="breadcrumbCurrent">Explorer</span>
+    </div>
+
     <!-- ═══════ DATABASE EXPLORER ═══════ -->
     <div id="page-explorer" class="page active">
-      <h1 class="page-title">Database Explorer</h1>
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:20px;">
+        <h1 class="page-title" style="margin-bottom:0;">Database Explorer</h1>
+        <button class="btn btn-sm btn-secondary btn-refresh" id="explorerRefreshBtn" onclick="refreshExplorer()" title="Refresh tables">
+          <span class="icon">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          </span>
+          Refresh
+        </button>
+      </div>
       <div class="explorer-layout">
+        <!-- Tables panel -->
         <div class="card">
           <div class="card-header">
             <h2>Tables</h2>
-            <button class="btn btn-sm btn-secondary" onclick="loadTables()">Refresh</button>
+            <span id="tableCount" style="font-size:11px; color:var(--text-muted); font-family:var(--mono);"></span>
+          </div>
+          <!-- Table search -->
+          <div class="table-search-wrapper">
+            <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+            <input type="text" id="tableSearchInput" placeholder="Filter tables..." oninput="filterTables(this.value)" aria-label="Filter tables">
           </div>
           <div class="card-body" style="padding: 8px;">
             <ul class="table-list" id="tableList">
@@ -846,11 +2906,21 @@
             </ul>
           </div>
         </div>
+
+        <!-- Detail panel -->
         <div>
+          <!-- Table schema card -->
           <div class="card" id="tableDetailCard" style="display:none">
             <div class="card-header">
               <h2 id="tableDetailName">--</h2>
-              <button class="btn btn-sm btn-secondary" onclick="loadSample()">View Data</button>
+              <div class="card-header-actions">
+                <button class="btn btn-sm btn-secondary" onclick="loadSample()">View Data</button>
+                <div class="copy-wrapper">
+                  <button class="btn-icon btn-icon-sm copy-btn visible" onclick="copyTableName()" title="Copy table name">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  </button>
+                </div>
+              </div>
             </div>
             <div class="card-body">
               <div class="table-wrap">
@@ -861,19 +2931,75 @@
               </div>
             </div>
           </div>
+
+          <!-- Sample data card -->
           <div class="card" id="sampleCard" style="display:none">
             <div class="card-header">
               <h2>Sample Data</h2>
-              <span id="sampleCount" style="font-size:12px; color: var(--text-secondary)"></span>
+              <div class="card-header-actions">
+                <span id="sampleCount" style="font-size:12px; color: var(--text-secondary)"></span>
+                <div class="export-group">
+                  <button class="btn-icon" onclick="exportSampleData('json')" title="Export as JSON">JSON</button>
+                  <button class="btn-icon" onclick="exportSampleData('csv')" title="Export as CSV">CSV</button>
+                </div>
+              </div>
             </div>
             <div class="card-body">
-              <div class="table-wrap" id="sampleWrap"></div>
+              <div class="table-wrap table-scroll-x" id="sampleWrap"></div>
             </div>
           </div>
+
+          <!-- Connection strings card -->
+          <div class="card" id="connStringCard" style="display:none">
+            <div class="card-header">
+              <h2>Connection Strings</h2>
+              <div class="copy-wrapper">
+                <button class="btn-icon btn-icon-sm copy-btn visible" id="connStringCopyBtn" onclick="copyConnectionString()" title="Copy connection string">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                </button>
+              </div>
+            </div>
+            <div class="conn-string-tabs" id="connStringTabs">
+              <button class="conn-string-tab active" data-tab="psql" onclick="switchConnTab('psql')">psql</button>
+              <button class="conn-string-tab" data-tab="psycopg2" onclick="switchConnTab('psycopg2')">psycopg2</button>
+              <button class="conn-string-tab" data-tab="jdbc" onclick="switchConnTab('jdbc')">JDBC</button>
+            </div>
+            <div class="conn-string-body">
+              <div class="conn-string-value" id="connStringValue">
+                Loading connection info...
+              </div>
+            </div>
+          </div>
+
+          <!-- Connection info card -->
+          <div class="card" id="connInfoCard" style="display:none">
+            <div class="card-header">
+              <h2>Connection Info</h2>
+              <div class="copy-wrapper">
+                <button class="btn-icon btn-icon-sm copy-btn visible" onclick="copyConnectionInfo()" title="Copy connection info">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                </button>
+              </div>
+            </div>
+            <div class="card-body">
+              <div id="connInfoContent" style="font-family:var(--mono); font-size:12px; color:var(--text-secondary);"></div>
+            </div>
+          </div>
+
+          <!-- Empty state -->
           <div id="explorerEmpty" class="card">
-            <div class="card-body empty">
-              <div class="icon">&#x1F5C4;</div>
-              <p>Select a table to explore its schema and data</p>
+            <div class="card-body">
+              <div class="empty-state">
+                <div class="empty-icon">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+                </div>
+                <div class="empty-title">Select a table</div>
+                <div class="empty-desc">Choose a table from the list on the left to explore its schema, sample data, and connection strings.</div>
+                <button class="empty-cta" onclick="loadTables()">
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                  Reload Tables
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -882,18 +3008,49 @@
 
     <!-- ═══════ SQL QUERY ═══════ -->
     <div id="page-query" class="page">
-      <h1 class="page-title">SQL Query</h1>
-      <div class="card">
-        <div class="card-body">
-          <div class="form-group">
-            <label>SELECT query (read-only, max 1000 rows) &mdash; <span style="color:var(--text-muted)">Ctrl+Enter to run</span></label>
-            <textarea id="sqlInput" rows="5" placeholder="SELECT * FROM my_table LIMIT 10" style="font-family: var(--mono); font-size: 13px;"></textarea>
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:20px;">
+        <h1 class="page-title" style="margin-bottom:0;">SQL Query</h1>
+        <button class="query-history-toggle" id="historyToggleBtn" onclick="toggleQueryHistory()" title="Toggle query history">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          <span id="historyToggleLabel">History</span>
+        </button>
+      </div>
+      <div class="query-layout">
+        <!-- Query history panel -->
+        <div class="query-history-panel" id="queryHistoryPanel">
+          <div class="query-history-header">
+            <h3>Recent Queries</h3>
+            <button class="btn-ghost" onclick="clearQueryHistory()" title="Clear history" style="font-size:12px; padding:2px 6px;">Clear</button>
           </div>
-          <div style="display:flex; gap:10px; align-items:center;">
-            <button class="btn btn-primary" onclick="runQuery()">Run Query</button>
-            <span id="queryStatus" style="font-size:12px; color:var(--text-secondary)"></span>
+          <ul class="query-history-list" id="queryHistoryList">
+            <li style="padding:24px; text-align:center; color:var(--text-muted); font-size:12px;">No queries yet</li>
+          </ul>
+        </div>
+
+        <!-- Query main area -->
+        <div class="query-main">
+          <div class="card">
+            <div class="card-body">
+              <div class="form-group">
+                <label>SELECT query (read-only, max 1000 rows) &mdash; <span style="color:var(--text-muted)">Ctrl+Enter to run</span></label>
+                <textarea id="sqlInput" rows="5" placeholder="SELECT * FROM my_table LIMIT 10" style="font-family: var(--mono); font-size: 13px;"></textarea>
+              </div>
+              <div style="display:flex; gap:10px; align-items:center;">
+                <button class="btn btn-primary" onclick="runQuery()">
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                  Run Query
+                </button>
+                <span id="queryStatus" style="font-size:12px; color:var(--text-secondary)"></span>
+                <div style="margin-left:auto;">
+                  <div class="export-group" id="queryExportGroup" style="display:none;">
+                    <button class="btn-icon" onclick="exportQueryResults('json')" title="Export as JSON">JSON</button>
+                    <button class="btn-icon" onclick="exportQueryResults('csv')" title="Export as CSV">CSV</button>
+                  </div>
+                </div>
+              </div>
+              <div id="queryResult"></div>
+            </div>
           </div>
-          <div id="queryResult"></div>
         </div>
       </div>
     </div>
@@ -901,7 +3058,7 @@
     <!-- ═══════ MCP TOOLS ═══════ -->
     <div id="page-tools" class="page">
       <h1 class="page-title">MCP Tools</h1>
-      <p class="page-subtitle">Endpoint: <code style="background:var(--bg-deepest);padding:2px 6px;border-radius:4px;font-family:var(--mono);font-size:12px;color:var(--neon-green)">/mcp/</code></p>
+      <p class="page-subtitle">Endpoint: <code style="background:var(--bg-deepest);padding:2px 6px;border-radius:4px;font-family:var(--mono);font-size:12px;color:var(--neon-green)">/mcp/</code> &mdash; 34 tools across 10 categories</p>
 
       <div id="toolsList">
         <div class="empty"><span class="spinner"></span></div>
@@ -917,7 +3074,10 @@
             </select>
           </div>
           <div id="playParams"></div>
-          <button class="btn btn-primary" onclick="runPlayTool()" id="playRunBtn" disabled>Execute Tool</button>
+          <button class="btn btn-primary" onclick="runPlayTool()" id="playRunBtn" disabled>
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            Execute Tool
+          </button>
           <div id="playResult"></div>
         </div>
       </div>
@@ -925,8 +3085,18 @@
 
     <!-- ═══════ PROJECTS ═══════ -->
     <div id="page-projects" class="page">
-      <h1 class="page-title">Projects</h1>
-      <p class="page-subtitle">Lakebase instances (provisioned and autoscaling) in this workspace.</p>
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:20px;">
+        <div>
+          <h1 class="page-title" style="margin-bottom:4px;">Projects</h1>
+          <p class="page-subtitle" style="margin-top:0;">Lakebase instances (provisioned and autoscaling) in this workspace.</p>
+        </div>
+        <button class="btn btn-sm btn-secondary btn-refresh" id="projectsRefreshBtn" onclick="refreshProjects()" title="Refresh projects">
+          <span class="icon">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          </span>
+          Refresh
+        </button>
+      </div>
       <div id="projectsList">
         <div class="empty"><span class="spinner"></span> Loading projects...</div>
       </div>
@@ -934,13 +3104,26 @@
 
     <!-- ═══════ BRANCHES ═══════ -->
     <div id="page-branches" class="page">
-      <h1 class="page-title">Branches</h1>
-      <p class="page-subtitle">Manage database branches for development and testing.</p>
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:20px;">
+        <div>
+          <h1 class="page-title" style="margin-bottom:4px;">Branches</h1>
+          <p class="page-subtitle" style="margin-top:0;">Manage database branches for development and testing.</p>
+        </div>
+        <button class="btn btn-sm btn-secondary btn-refresh" id="branchesRefreshBtn" onclick="refreshBranches()" title="Refresh branches">
+          <span class="icon">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          </span>
+          Refresh
+        </button>
+      </div>
 
       <div class="card">
         <div class="card-header">
           <h2>Branch List</h2>
-          <button class="btn btn-sm btn-primary" onclick="showCreateBranch()">Create Branch</button>
+          <button class="btn btn-sm btn-primary" onclick="showCreateBranch()">
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            Create Branch
+          </button>
         </div>
         <div class="card-body">
           <div class="form-group" style="max-width:320px; margin-bottom:16px;">
@@ -983,8 +3166,18 @@
 
     <!-- ═══════ ENDPOINTS ═══════ -->
     <div id="page-endpoints" class="page">
-      <h1 class="page-title">Endpoints</h1>
-      <p class="page-subtitle">Compute endpoints and autoscaling configuration.</p>
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:20px;">
+        <div>
+          <h1 class="page-title" style="margin-bottom:4px;">Endpoints</h1>
+          <p class="page-subtitle" style="margin-top:0;">Compute endpoints and autoscaling configuration.</p>
+        </div>
+        <button class="btn btn-sm btn-secondary btn-refresh" id="endpointsRefreshBtn" onclick="refreshEndpoints()" title="Refresh endpoints">
+          <span class="icon">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          </span>
+          Refresh
+        </button>
+      </div>
 
       <div class="card">
         <div class="card-body">
@@ -1052,7 +3245,7 @@ Lakebase MCP Server (Databricks App)
     v
 Lakebase Instance (PostgreSQL-compatible)</code></pre>
 
-          <h3>MCP Tools (27)</h3>
+          <h3>MCP Tools (34)</h3>
           <table>
             <thead><tr><th>Tool</th><th>Type</th><th>Description</th></tr></thead>
             <tbody>
@@ -1083,6 +3276,14 @@ Lakebase Instance (PostgreSQL-compatible)</code></pre>
               <tr><td><code>configure_autoscaling</code></td><td><span class="badge badge-scale">SCALE</span></td><td>Set min/max compute units for an endpoint</td></tr>
               <tr><td><code>configure_scale_to_zero</code></td><td><span class="badge badge-scale">SCALE</span></td><td>Enable/disable scale-to-zero and idle timeout</td></tr>
               <tr><td><code>profile_table</code></td><td><span class="badge badge-quality">QUALITY</span></td><td>Statistical profiling of table columns</td></tr>
+              <!-- New tools -->
+              <tr><td><code>describe_branch</code></td><td><span class="badge badge-read">READ</span></td><td>Get detailed info about a specific branch including parent, state, and endpoints</td></tr>
+              <tr><td><code>compare_database_schema</code></td><td><span class="badge badge-read">READ</span></td><td>Compare schemas between two databases or branches to find differences</td></tr>
+              <tr><td><code>search</code></td><td><span class="badge badge-read">READ</span></td><td>Full-text search across table names, columns, and values</td></tr>
+              <tr><td><code>prepare_database_migration</code></td><td><span class="badge badge-ddl">DDL</span></td><td>Generate a migration plan with DDL statements for schema changes</td></tr>
+              <tr><td><code>complete_database_migration</code></td><td><span class="badge badge-ddl">DDL</span></td><td>Execute a prepared migration plan with rollback support</td></tr>
+              <tr><td><code>prepare_query_tuning</code></td><td><span class="badge badge-perf">PERF</span></td><td>Analyze query performance and suggest index/rewrite optimizations</td></tr>
+              <tr><td><code>complete_query_tuning</code></td><td><span class="badge badge-perf">PERF</span></td><td>Apply recommended query tuning changes (indexes, rewrites)</td></tr>
             </tbody>
           </table>
 
@@ -1182,7 +3383,7 @@ GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO \"APP_SP_CLIENT_ID\";
                 <li>Description: "Execute Lakebase database operations &mdash; CRUD on operational tables"</li>
               </ul>
             </li>
-            <li><strong>Rediscover tools:</strong> Open the MAS config page and click "Rediscover tools" to detect the 27 MCP tools.</li>
+            <li><strong>Rediscover tools:</strong> Open the MAS config page and click "Rediscover tools" to detect the 34 MCP tools.</li>
           </ol>
 
           <h3>Using with Claude Code</h3>
@@ -1233,6 +3434,8 @@ GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO \"APP_SP_CLIENT_ID\";
             <li><strong>OAuth M2M for UC connection:</strong> SP OAuth secrets must be created at the Account Console level, not via workspace API.</li>
             <li><strong>CAN_USE for users group:</strong> The MAS MCP proxy needs <code>CAN_USE</code> on the app. Grant to <code>users</code> group.</li>
             <li><strong>Autoscaling scale-to-zero:</strong> If the endpoint is suspended, the first request may take 2-5 seconds while compute wakes up.</li>
+            <li><strong>Security labels:</strong> Tools that perform writes (<code>insert_record</code>, <code>update_records</code>, <code>delete_records</code>, <code>execute_sql</code>, <code>complete_database_migration</code>, <code>complete_query_tuning</code>) are annotated with <code>readOnlyHint: false</code> and <code>destructiveHint: true</code> in the MCP tool schema, so agents can apply appropriate guardrails.</li>
+            <li><strong>Migration expiry:</strong> Prepared migration plans (from <code>prepare_database_migration</code>) include a session token that expires after 30 minutes. If the token expires, re-run the prepare step before calling <code>complete_database_migration</code>.</li>
           </ul>
 
           <h3>Reuse Across Demos</h3>
@@ -1243,15 +3446,881 @@ GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO \"APP_SP_CLIENT_ID\";
 
   </div>
 </div>
-
 <script>
+// ══════════════════════════════════════════════════════════════════════
+// PART 3 — Complete JavaScript for Lakebase MCP Server UI
+// ══════════════════════════════════════════════════════════════════════
+
 // ── State ───────────────────────────────────────────────────────────
 let currentTable = null;
 let toolsData = [];
 let tablesData = [];
 let projectsData = [];
+let queryHistory = JSON.parse(localStorage.getItem('lakebase_query_history') || '[]');
+let commandPaletteOpen = false;
+let commandSelectedIndex = 0;
+let commandFilteredItems = [];
+let sortState = {}; // { tableEl: { col, dir } }
 
-// ── API helpers ─────────────────────────────────────────────────────
+// ── Theme ───────────────────────────────────────────────────────────
+(function restoreTheme() {
+  const saved = localStorage.getItem('lakebase_theme');
+  if (saved) document.documentElement.setAttribute('data-theme', saved);
+})();
+
+// ── Sidebar collapse restore ────────────────────────────────────────
+(function restoreSidebar() {
+  const collapsed = localStorage.getItem('lakebase_sidebar_collapsed') === 'true';
+  if (collapsed) {
+    const sidebar = document.querySelector('.sidebar');
+    if (sidebar) sidebar.classList.add('collapsed');
+  }
+})();
+
+// ══════════════════════════════════════════════════════════════════════
+// TOAST NOTIFICATION SYSTEM
+// ══════════════════════════════════════════════════════════════════════
+function showToast(message, type = 'info', duration = 4000) {
+  const container = document.getElementById('toastContainer');
+  if (!container) return;
+
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type}`;
+
+  const icons = {
+    success: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>',
+    error: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
+    warning: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
+    info: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>',
+  };
+
+  toast.innerHTML = `
+    <div class="toast-content">
+      <span class="toast-icon">${icons[type] || icons.info}</span>
+      <span class="toast-message">${escapeHtml(message)}</span>
+      <button class="toast-close" onclick="this.closest('.toast').remove()">&times;</button>
+    </div>
+    <div class="toast-progress"><div class="toast-progress-bar" style="animation-duration:${duration}ms"></div></div>
+  `;
+
+  container.appendChild(toast);
+
+  // Trigger enter animation
+  requestAnimationFrame(() => toast.classList.add('toast-enter'));
+
+  // Auto-dismiss
+  const timer = setTimeout(() => {
+    toast.classList.add('toast-exit');
+    toast.addEventListener('transitionend', () => toast.remove(), { once: true });
+    // Fallback removal
+    setTimeout(() => { if (toast.parentNode) toast.remove(); }, 400);
+  }, duration);
+
+  // Cancel timer on manual close
+  toast.querySelector('.toast-close').addEventListener('click', () => {
+    clearTimeout(timer);
+    toast.classList.add('toast-exit');
+    setTimeout(() => { if (toast.parentNode) toast.remove(); }, 400);
+  });
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// CONFIRMATION MODAL
+// ══════════════════════════════════════════════════════════════════════
+function showModal(title, message, onConfirm, options = {}) {
+  return new Promise((resolve) => {
+    const overlay = document.getElementById('modalOverlay');
+    const titleEl = document.getElementById('modalTitle');
+    const messageEl = document.getElementById('modalMessage');
+    const confirmBtn = document.getElementById('modalConfirm');
+    const cancelBtn = document.getElementById('modalCancel');
+
+    if (!overlay || !titleEl || !messageEl || !confirmBtn || !cancelBtn) {
+      // Fallback to native confirm if modal elements don't exist
+      const result = confirm(message);
+      if (result && onConfirm) onConfirm();
+      resolve(result);
+      return;
+    }
+
+    titleEl.textContent = title;
+    messageEl.textContent = message;
+
+    if (options.danger) {
+      confirmBtn.className = 'btn btn-danger';
+      confirmBtn.textContent = options.confirmText || 'Delete';
+    } else {
+      confirmBtn.className = 'btn btn-primary';
+      confirmBtn.textContent = options.confirmText || 'Confirm';
+    }
+    cancelBtn.textContent = options.cancelText || 'Cancel';
+
+    overlay.classList.add('active');
+
+    function cleanup() {
+      overlay.classList.remove('active');
+      confirmBtn.removeEventListener('click', onConfirmClick);
+      cancelBtn.removeEventListener('click', onCancelClick);
+      document.removeEventListener('keydown', onKey);
+    }
+
+    function onConfirmClick() {
+      cleanup();
+      if (onConfirm) onConfirm();
+      resolve(true);
+    }
+
+    function onCancelClick() {
+      cleanup();
+      resolve(false);
+    }
+
+    function onKey(e) {
+      if (e.key === 'Escape') onCancelClick();
+      if (e.key === 'Enter') onConfirmClick();
+    }
+
+    confirmBtn.addEventListener('click', onConfirmClick);
+    cancelBtn.addEventListener('click', onCancelClick);
+    document.addEventListener('keydown', onKey);
+  });
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// COMMAND PALETTE (Cmd+K)
+// ══════════════════════════════════════════════════════════════════════
+function buildCommandList() {
+  const commands = [];
+
+  // Navigation commands
+  const pages = [
+    { page: 'explorer', label: 'Go to Explorer', icon: 'db' },
+    { page: 'query', label: 'Go to SQL Query', icon: 'code' },
+    { page: 'tools', label: 'Go to MCP Tools', icon: 'wrench' },
+    { page: 'projects', label: 'Go to Projects', icon: 'folder' },
+    { page: 'branches', label: 'Go to Branches', icon: 'branch' },
+    { page: 'endpoints', label: 'Go to Endpoints', icon: 'monitor' },
+    { page: 'profiler', label: 'Go to Profiler', icon: 'chart' },
+    { page: 'docs', label: 'Go to Documentation', icon: 'book' },
+  ];
+
+  pages.forEach(p => {
+    commands.push({
+      label: p.label,
+      category: 'Navigation',
+      action: () => navigateToPage(p.page),
+    });
+  });
+
+  // Table commands
+  if (tablesData.length) {
+    tablesData.forEach(t => {
+      commands.push({
+        label: `Table: ${t.table_name}`,
+        category: 'Tables',
+        action: () => {
+          navigateToPage('explorer');
+          selectTable(t.table_name);
+        },
+      });
+    });
+  }
+
+  // Common SQL commands
+  const commonSql = [
+    { label: 'Run: SELECT all tables', sql: "SELECT tablename FROM pg_tables WHERE schemaname = 'public'" },
+    { label: 'Run: Show database size', sql: "SELECT pg_size_pretty(pg_database_size(current_database())) as db_size" },
+    { label: 'Run: Active connections', sql: "SELECT count(*) as active_connections FROM pg_stat_activity WHERE state = 'active'" },
+    { label: 'Run: Table sizes', sql: "SELECT relname as table_name, pg_size_pretty(pg_total_relation_size(relid)) as total_size FROM pg_catalog.pg_statio_user_tables ORDER BY pg_total_relation_size(relid) DESC LIMIT 20" },
+    { label: 'Run: Current queries', sql: "SELECT pid, state, query, query_start FROM pg_stat_activity WHERE state != 'idle' ORDER BY query_start" },
+  ];
+
+  commonSql.forEach(s => {
+    commands.push({
+      label: s.label,
+      category: 'SQL',
+      action: () => {
+        navigateToPage('query');
+        document.getElementById('sqlInput').value = s.sql;
+        setTimeout(() => runQuery(), 100);
+      },
+    });
+  });
+
+  // Database switching
+  const dbSelect = document.getElementById('dbSelect');
+  if (dbSelect) {
+    Array.from(dbSelect.options).forEach(opt => {
+      if (opt.value) {
+        commands.push({
+          label: `Switch to database: ${opt.value}`,
+          category: 'Database',
+          action: () => {
+            dbSelect.value = opt.value;
+            switchDatabase();
+          },
+        });
+      }
+    });
+  }
+
+  // Utility commands
+  commands.push({
+    label: 'Clear query history',
+    category: 'Utility',
+    action: () => clearQueryHistory(),
+  });
+  commands.push({
+    label: 'Refresh tables',
+    category: 'Utility',
+    action: () => loadTables(),
+  });
+  commands.push({
+    label: 'Toggle theme',
+    category: 'Utility',
+    action: () => toggleTheme(),
+  });
+  commands.push({
+    label: 'Show keyboard shortcuts',
+    category: 'Utility',
+    action: () => toggleShortcutsOverlay(true),
+  });
+
+  return commands;
+}
+
+function openCommandPalette() {
+  const palette = document.getElementById('commandPalette');
+  if (!palette) return;
+  commandPaletteOpen = true;
+  palette.classList.add('active');
+  const input = document.getElementById('commandPaletteInput');
+  if (input) {
+    input.value = '';
+    input.focus();
+  }
+  commandSelectedIndex = 0;
+  searchCommands('');
+}
+
+function closeCommandPalette() {
+  const palette = document.getElementById('commandPalette');
+  if (!palette) return;
+  commandPaletteOpen = false;
+  palette.classList.remove('active');
+}
+
+function searchCommands(query) {
+  const resultsEl = document.getElementById('commandPaletteResults');
+  if (!resultsEl) return;
+
+  const allCommands = buildCommandList();
+  const q = query.toLowerCase().trim();
+
+  commandFilteredItems = q
+    ? allCommands.filter(c => c.label.toLowerCase().includes(q) || c.category.toLowerCase().includes(q))
+    : allCommands;
+
+  if (commandSelectedIndex >= commandFilteredItems.length) {
+    commandSelectedIndex = 0;
+  }
+
+  if (!commandFilteredItems.length) {
+    resultsEl.innerHTML = '<div class="command-empty">No matching commands</div>';
+    return;
+  }
+
+  // Group by category
+  const grouped = {};
+  commandFilteredItems.forEach((c, i) => {
+    if (!grouped[c.category]) grouped[c.category] = [];
+    grouped[c.category].push({ ...c, _index: i });
+  });
+
+  let html = '';
+  for (const [cat, items] of Object.entries(grouped)) {
+    html += `<div class="command-category">${escapeHtml(cat)}</div>`;
+    items.forEach(item => {
+      const selected = item._index === commandSelectedIndex ? ' command-selected' : '';
+      html += `<div class="command-item${selected}" data-index="${item._index}" onmouseenter="commandSelectedIndex=${item._index};highlightCommandItem()" onclick="executeCommand(${item._index})">${escapeHtml(item.label)}</div>`;
+    });
+  }
+
+  resultsEl.innerHTML = html;
+}
+
+function highlightCommandItem() {
+  const resultsEl = document.getElementById('commandPaletteResults');
+  if (!resultsEl) return;
+  resultsEl.querySelectorAll('.command-item').forEach(el => {
+    el.classList.toggle('command-selected', parseInt(el.dataset.index) === commandSelectedIndex);
+  });
+}
+
+function executeCommand(index) {
+  const item = commandFilteredItems[index];
+  if (item) {
+    closeCommandPalette();
+    item.action();
+  }
+}
+
+// Command palette input handler
+document.addEventListener('DOMContentLoaded', () => {
+  const input = document.getElementById('commandPaletteInput');
+  if (input) {
+    input.addEventListener('input', (e) => searchCommands(e.target.value));
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        commandSelectedIndex = Math.min(commandSelectedIndex + 1, commandFilteredItems.length - 1);
+        highlightCommandItem();
+        scrollCommandIntoView();
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        commandSelectedIndex = Math.max(commandSelectedIndex - 1, 0);
+        highlightCommandItem();
+        scrollCommandIntoView();
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        executeCommand(commandSelectedIndex);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        closeCommandPalette();
+      }
+    });
+  }
+
+  // Close palette on overlay click
+  const palette = document.getElementById('commandPalette');
+  if (palette) {
+    palette.addEventListener('click', (e) => {
+      if (e.target === palette) closeCommandPalette();
+    });
+  }
+});
+
+function scrollCommandIntoView() {
+  const resultsEl = document.getElementById('commandPaletteResults');
+  if (!resultsEl) return;
+  const selected = resultsEl.querySelector('.command-selected');
+  if (selected) selected.scrollIntoView({ block: 'nearest' });
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// COPY TO CLIPBOARD
+// ══════════════════════════════════════════════════════════════════════
+async function copyToClipboard(text, btn) {
+  try {
+    await navigator.clipboard.writeText(text);
+    if (btn) {
+      const originalText = btn.textContent;
+      btn.textContent = 'Copied!';
+      btn.classList.add('copied');
+      setTimeout(() => {
+        btn.textContent = originalText;
+        btn.classList.remove('copied');
+      }, 1500);
+    }
+    showToast('Copied to clipboard', 'success', 2000);
+  } catch (e) {
+    showToast('Failed to copy: ' + e.message, 'error');
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// SKELETON LOADING
+// ══════════════════════════════════════════════════════════════════════
+function showSkeleton(containerId, type = 'table') {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+
+  let html = '';
+  if (type === 'table') {
+    html = '<div class="skeleton-table">';
+    // Header row
+    html += '<div class="skeleton-row skeleton-header">';
+    for (let c = 0; c < 5; c++) {
+      html += '<div class="skeleton-cell skeleton-pulse"></div>';
+    }
+    html += '</div>';
+    // Data rows
+    for (let r = 0; r < 6; r++) {
+      html += '<div class="skeleton-row">';
+      for (let c = 0; c < 5; c++) {
+        const w = 40 + Math.random() * 50;
+        html += `<div class="skeleton-cell skeleton-pulse" style="width:${w}%"></div>`;
+      }
+      html += '</div>';
+    }
+    html += '</div>';
+  } else if (type === 'cards') {
+    html = '<div class="skeleton-cards">';
+    for (let i = 0; i < 6; i++) {
+      html += `<div class="skeleton-card">
+        <div class="skeleton-line skeleton-pulse" style="width:60%;height:16px;margin-bottom:12px"></div>
+        <div class="skeleton-line skeleton-pulse" style="width:80%;height:12px;margin-bottom:8px"></div>
+        <div class="skeleton-line skeleton-pulse" style="width:45%;height:12px;margin-bottom:8px"></div>
+        <div class="skeleton-line skeleton-pulse" style="width:70%;height:12px"></div>
+      </div>`;
+    }
+    html += '</div>';
+  } else if (type === 'list') {
+    html = '<div class="skeleton-list">';
+    for (let i = 0; i < 8; i++) {
+      const w = 30 + Math.random() * 60;
+      html += `<div class="skeleton-list-item">
+        <div class="skeleton-line skeleton-pulse" style="width:${w}%;height:14px"></div>
+      </div>`;
+    }
+    html += '</div>';
+  }
+
+  container.innerHTML = html;
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// BREADCRUMBS
+// ══════════════════════════════════════════════════════════════════════
+function updateBreadcrumbs(items) {
+  const el = document.getElementById('breadcrumbs');
+  if (!el) return;
+
+  if (!items || !items.length) {
+    el.innerHTML = '';
+    return;
+  }
+
+  el.innerHTML = items.map((item, i) => {
+    const isLast = i === items.length - 1;
+    if (isLast) {
+      return `<span class="breadcrumb-current">${escapeHtml(item.label)}</span>`;
+    }
+    if (item.onClick) {
+      return `<span class="breadcrumb-link" onclick="${escapeHtml(item.onClick)}">${escapeHtml(item.label)}</span><span class="breadcrumb-sep">/</span>`;
+    }
+    return `<span class="breadcrumb-text">${escapeHtml(item.label)}</span><span class="breadcrumb-sep">/</span>`;
+  }).join('');
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// DATA EXPORT (JSON & CSV)
+// ══════════════════════════════════════════════════════════════════════
+function exportJSON(data, filename = 'export.json') {
+  if (!data || !data.length) {
+    showToast('No data to export', 'warning');
+    return;
+  }
+  const json = JSON.stringify(data, null, 2);
+  const blob = new Blob([json], { type: 'application/json' });
+  triggerDownload(blob, filename);
+  showToast(`Exported ${data.length} rows as JSON`, 'success');
+}
+
+function exportCSV(data, filename = 'export.csv') {
+  if (!data || !data.length) {
+    showToast('No data to export', 'warning');
+    return;
+  }
+  const cols = Object.keys(data[0]);
+  const escapeCsvCell = (val) => {
+    if (val === null || val === undefined) return '';
+    const str = typeof val === 'object' ? JSON.stringify(val) : String(val);
+    if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+      return '"' + str.replace(/"/g, '""') + '"';
+    }
+    return str;
+  };
+
+  const header = cols.map(escapeCsvCell).join(',');
+  const rows = data.map(row => cols.map(c => escapeCsvCell(row[c])).join(','));
+  const csv = [header, ...rows].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  triggerDownload(blob, filename);
+  showToast(`Exported ${data.length} rows as CSV`, 'success');
+}
+
+function triggerDownload(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// COLUMN SORTING
+// ══════════════════════════════════════════════════════════════════════
+function sortTable(tableEl, colIndex, direction) {
+  if (!tableEl) return;
+  const tbody = tableEl.querySelector('tbody');
+  if (!tbody) return;
+
+  const rows = Array.from(tbody.querySelectorAll('tr'));
+  rows.sort((a, b) => {
+    const cellA = a.children[colIndex]?.textContent?.trim() || '';
+    const cellB = b.children[colIndex]?.textContent?.trim() || '';
+
+    // Try numeric comparison first
+    const numA = parseFloat(cellA.replace(/[,$%]/g, ''));
+    const numB = parseFloat(cellB.replace(/[,$%]/g, ''));
+    if (!isNaN(numA) && !isNaN(numB)) {
+      return direction === 'asc' ? numA - numB : numB - numA;
+    }
+
+    // Fall back to string comparison
+    const cmp = cellA.localeCompare(cellB, undefined, { numeric: true, sensitivity: 'base' });
+    return direction === 'asc' ? cmp : -cmp;
+  });
+
+  rows.forEach(r => tbody.appendChild(r));
+
+  // Update header arrows
+  tableEl.querySelectorAll('th').forEach((th, i) => {
+    th.classList.remove('sort-asc', 'sort-desc');
+    if (i === colIndex) {
+      th.classList.add(direction === 'asc' ? 'sort-asc' : 'sort-desc');
+    }
+  });
+}
+
+function makeSortable(tableEl) {
+  if (!tableEl) return;
+  const headers = tableEl.querySelectorAll('th');
+  headers.forEach((th, i) => {
+    th.style.cursor = 'pointer';
+    th.addEventListener('click', () => {
+      const currentDir = th.classList.contains('sort-asc') ? 'asc' : (th.classList.contains('sort-desc') ? 'desc' : null);
+      const newDir = currentDir === 'asc' ? 'desc' : 'asc';
+      sortTable(tableEl, i, newDir);
+    });
+  });
+}
+
+// Observe DOM for new tables and make them sortable
+const tableObserver = new MutationObserver((mutations) => {
+  mutations.forEach(m => {
+    m.addedNodes.forEach(node => {
+      if (node.nodeType === 1) {
+        const tables = node.tagName === 'TABLE' ? [node] : node.querySelectorAll ? Array.from(node.querySelectorAll('table')) : [];
+        tables.forEach(t => makeSortable(t));
+      }
+    });
+  });
+});
+tableObserver.observe(document.body, { childList: true, subtree: true });
+
+// ══════════════════════════════════════════════════════════════════════
+// QUERY HISTORY
+// ══════════════════════════════════════════════════════════════════════
+function addToQueryHistory(sql, rowCount, duration) {
+  queryHistory.unshift({
+    sql: sql,
+    timestamp: new Date().toISOString(),
+    rowCount: rowCount,
+    duration: duration,
+  });
+  // Cap at 50 entries
+  if (queryHistory.length > 50) queryHistory = queryHistory.slice(0, 50);
+  localStorage.setItem('lakebase_query_history', JSON.stringify(queryHistory));
+  renderQueryHistory();
+}
+
+function clearQueryHistory() {
+  queryHistory = [];
+  localStorage.setItem('lakebase_query_history', JSON.stringify(queryHistory));
+  renderQueryHistory();
+  showToast('Query history cleared', 'info');
+}
+
+function renderQueryHistory() {
+  const list = document.getElementById('queryHistoryList');
+  if (!list) return;
+
+  if (!queryHistory.length) {
+    list.innerHTML = '<div class="empty" style="padding:16px;font-size:12px">No query history yet</div>';
+    return;
+  }
+
+  list.innerHTML = queryHistory.map((h, i) => {
+    const time = new Date(h.timestamp);
+    const timeStr = time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const dateStr = time.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    const sqlPreview = h.sql.length > 80 ? h.sql.substring(0, 80) + '...' : h.sql;
+    return `<div class="history-item" onclick="loadHistoryQuery(${i})" title="${escapeHtml(h.sql)}">
+      <div class="history-sql">${escapeHtml(sqlPreview)}</div>
+      <div class="history-meta">
+        <span>${dateStr} ${timeStr}</span>
+        ${h.rowCount !== undefined ? `<span>${h.rowCount} rows</span>` : ''}
+        ${h.duration !== undefined ? `<span>${h.duration}ms</span>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function loadHistoryQuery(index) {
+  if (queryHistory[index]) {
+    document.getElementById('sqlInput').value = queryHistory[index].sql;
+    navigateToPage('query');
+    showToast('Query loaded from history', 'info', 2000);
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// TABLE SEARCH / FILTER
+// ══════════════════════════════════════════════════════════════════════
+function filterTables(query) {
+  const q = (query || '').toLowerCase().trim();
+  const items = document.querySelectorAll('#tableList li');
+  items.forEach(li => {
+    if (li.classList.contains('empty')) return;
+    const name = (li.dataset.table || li.textContent || '').toLowerCase();
+    li.style.display = (!q || name.includes(q)) ? '' : 'none';
+  });
+}
+
+// Table search is bound via oninput="filterTables(this.value)" in HTML
+
+// ══════════════════════════════════════════════════════════════════════
+// SIDEBAR COLLAPSE
+// ══════════════════════════════════════════════════════════════════════
+// Sidebar collapse is bound via onclick="toggleSidebar()" in HTML
+
+// ══════════════════════════════════════════════════════════════════════
+// THEME TOGGLE
+// ══════════════════════════════════════════════════════════════════════
+function toggleTheme() {
+  const html = document.documentElement;
+  const current = html.getAttribute('data-theme');
+  const next = current === 'light' ? 'dark' : 'light';
+  html.setAttribute('data-theme', next);
+  localStorage.setItem('lakebase_theme', next);
+  showToast(`Theme switched to ${next}`, 'info', 2000);
+}
+
+// Theme toggle is bound via onclick="toggleTheme()" in HTML
+
+// ══════════════════════════════════════════════════════════════════════
+// KEYBOARD SHORTCUTS OVERLAY
+// ══════════════════════════════════════════════════════════════════════
+function toggleShortcutsOverlay(forceOpen) {
+  const overlay = document.getElementById('shortcutsOverlay');
+  if (!overlay) return;
+  if (forceOpen === true) {
+    overlay.classList.add('active');
+  } else if (forceOpen === false) {
+    overlay.classList.remove('active');
+  } else {
+    overlay.classList.toggle('active');
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// GLOBAL KEYBOARD SHORTCUTS
+// ══════════════════════════════════════════════════════════════════════
+document.addEventListener('keydown', (e) => {
+  // Cmd+K / Ctrl+K => Command Palette
+  if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+    e.preventDefault();
+    if (commandPaletteOpen) {
+      closeCommandPalette();
+    } else {
+      openCommandPalette();
+    }
+    return;
+  }
+
+  // Escape => close overlays
+  if (e.key === 'Escape') {
+    if (commandPaletteOpen) { closeCommandPalette(); return; }
+    const shortcuts = document.getElementById('shortcutsOverlay');
+    if (shortcuts && shortcuts.classList.contains('active')) { toggleShortcutsOverlay(false); return; }
+    const modal = document.getElementById('modalOverlay');
+    if (modal && modal.classList.contains('active')) { /* handled by modal's own listener */ return; }
+  }
+
+  // Skip all shortcuts below when typing in an input
+  if (isTypingInInput(e.target)) return;
+
+  // '?' => show keyboard shortcuts
+  if (e.key === '?') {
+    e.preventDefault();
+    toggleShortcutsOverlay();
+    return;
+  }
+
+  // Number keys 1-8 => navigate to page
+  const navPages = ['explorer', 'query', 'tools', 'projects', 'branches', 'endpoints', 'profiler', 'docs'];
+  const idx = parseInt(e.key, 10);
+  if (idx >= 1 && idx <= 8) {
+    e.preventDefault();
+    navigateToPage(navPages[idx - 1]);
+    return;
+  }
+
+  // 'r' => refresh current page
+  if (e.key === 'r') {
+    e.preventDefault();
+    const activePage = document.querySelector('.page.active');
+    if (activePage) {
+      const id = activePage.id.replace('page-', '');
+      if (id === 'explorer') refreshExplorer();
+      else if (id === 'projects') loadProjects();
+      else if (id === 'branches') { const sel = document.getElementById('branchProjectSelect'); if (sel && sel.value) loadBranches(sel.value); }
+      else if (id === 'endpoints') { const sel = document.getElementById('endpointProjectSelect'); if (sel && sel.value) loadEndpoints(sel.value, document.getElementById('endpointBranchSelect').value); }
+    }
+    return;
+  }
+
+  // 't' => toggle theme
+  if (e.key === 't') {
+    e.preventDefault();
+    toggleTheme();
+    return;
+  }
+
+  // '[' => toggle sidebar
+  if (e.key === '[') {
+    e.preventDefault();
+    toggleSidebar();
+    return;
+  }
+
+  // 'h' => toggle query history
+  if (e.key === 'h') {
+    e.preventDefault();
+    toggleQueryHistory();
+    return;
+  }
+});
+
+function isTypingInInput(target) {
+  if (!target) return false;
+  const tag = target.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable;
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// CONNECTION STRING BUILDER
+// ══════════════════════════════════════════════════════════════════════
+async function buildConnectionStrings() {
+  const panel = document.getElementById('connStringCard');
+  const connInfoCard = document.getElementById('connInfoCard');
+  if (!panel) return;
+
+  try {
+    const info = await api('/api/info');
+    const host = info.host || 'localhost';
+    const port = info.port || 5432;
+    const db = info.database || 'postgres';
+    const user = info.user || 'user';
+
+    // Store strings globally for switchConnTab
+    window._connStrings = {
+      psql: `psql "host=${host} port=${port} dbname=${db} user=${user} sslmode=require"`,
+      psycopg2: `psycopg2.connect(host="${host}", port=${port}, dbname="${db}", user="${user}", sslmode="require")`,
+      jdbc: `jdbc:postgresql://${host}:${port}/${db}?user=${user}&sslmode=require`,
+    };
+
+    // Update the connection string value
+    const valueEl = document.getElementById('connStringValue');
+    if (valueEl) valueEl.textContent = window._connStrings.psql;
+
+    // Show the card
+    panel.style.display = '';
+
+    // Update connection info card
+    if (connInfoCard) {
+      const infoEl = document.getElementById('connInfoContent');
+      if (infoEl) {
+        infoEl.innerHTML = `<div style="font-family:var(--mono);font-size:12px;line-height:1.8">
+          <div><span style="color:var(--text-muted)">Host:</span> ${escapeHtml(host)}</div>
+          <div><span style="color:var(--text-muted)">Port:</span> ${port}</div>
+          <div><span style="color:var(--text-muted)">Database:</span> ${escapeHtml(db)}</div>
+          <div><span style="color:var(--text-muted)">User:</span> ${escapeHtml(user)}</div>
+          <div><span style="color:var(--text-muted)">Mode:</span> ${escapeHtml(info.connection_mode || 'provisioned')}</div>
+        </div>`;
+      }
+      connInfoCard.style.display = '';
+    }
+  } catch (e) {
+    // Hide cards on error
+    panel.style.display = 'none';
+    if (connInfoCard) connInfoCard.style.display = 'none';
+  }
+}
+
+function showConnTab(btn, tabName) {
+  const panel = btn.closest('#connStringCard') || document.getElementById('connStringCard');
+  if (!panel) return;
+  panel.querySelectorAll('.conn-tab').forEach(t => t.classList.remove('active'));
+  btn.classList.add('active');
+  panel.querySelectorAll('.conn-content').forEach(c => c.style.display = 'none');
+  const target = document.getElementById('conn-' + tabName);
+  if (target) target.style.display = '';
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// STATUS DISPLAY (latency measurement)
+// ══════════════════════════════════════════════════════════════════════
+async function measureLatency() {
+  const statusDetails = document.getElementById('statusDetails');
+
+  try {
+    const start = performance.now();
+    const resp = await fetch('/health');
+    const elapsed = Math.round(performance.now() - start);
+    const data = await resp.json();
+
+    const parts = [];
+    if (data.instance) parts.push(data.instance);
+    if (data.database) parts.push(data.database);
+    parts.push(`${elapsed}ms`);
+
+    if (statusDetails) {
+      statusDetails.textContent = parts.join(' | ');
+      statusDetails.title = `Latency: ${elapsed}ms`;
+    }
+  } catch (e) {
+    if (statusDetails) statusDetails.textContent = 'Unable to reach server';
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// REFRESH BUTTON ANIMATION
+// ══════════════════════════════════════════════════════════════════════
+function setRefreshing(btn, isRefreshing) {
+  if (!btn) return;
+  if (isRefreshing) {
+    btn.classList.add('refreshing');
+    btn.disabled = true;
+  } else {
+    btn.classList.remove('refreshing');
+    btn.disabled = false;
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// SQL SYNTAX HIGHLIGHTING
+// ══════════════════════════════════════════════════════════════════════
+function highlightSQL(containerOrEl) {
+  if (typeof hljs === 'undefined') return;
+  const el = typeof containerOrEl === 'string' ? document.getElementById(containerOrEl) : containerOrEl;
+  if (!el) return;
+  const codeBlocks = el.querySelectorAll('pre code');
+  codeBlocks.forEach(block => {
+    if (!block.classList.contains('hljs')) {
+      hljs.highlightElement(block);
+    }
+  });
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// API HELPERS
+// ══════════════════════════════════════════════════════════════════════
 async function api(path, opts = {}) {
   const resp = await fetch(path, {
     headers: { 'Content-Type': 'application/json' },
@@ -1268,6 +4337,15 @@ function escapeHtml(str) {
   return d.innerHTML;
 }
 
+function resolveState(val) {
+  if (!val) return 'unknown';
+  if (typeof val === 'string') return val;
+  if (typeof val === 'object') {
+    return val.state || val.status || val.lifecycle_state || val.phase || 'unknown';
+  }
+  return String(val);
+}
+
 function stateClass(state) {
   if (!state) return 'unknown';
   const s = String(state).toLowerCase();
@@ -1281,22 +4359,45 @@ function stateLabel(state) {
   return state ? String(state).charAt(0).toUpperCase() + String(state).slice(1).toLowerCase() : 'Unknown';
 }
 
-// ── Navigation ──────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════
+// NAVIGATION
+// ══════════════════════════════════════════════════════════════════════
+function navigateToPage(pageName) {
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+
+  const navItem = document.querySelector(`.nav-item[data-page="${pageName}"]`);
+  if (navItem) navItem.classList.add('active');
+
+  const pageEl = document.getElementById('page-' + pageName);
+  if (pageEl) pageEl.classList.add('active');
+
+  // Update breadcrumbs
+  const pageLabels = {
+    explorer: 'Explorer', query: 'SQL Query', tools: 'MCP Tools',
+    projects: 'Projects', branches: 'Branches', endpoints: 'Endpoints',
+    profiler: 'Profiler', docs: 'Documentation',
+  };
+  updateBreadcrumbs([
+    { label: 'Lakebase', onClick: "navigateToPage('explorer')" },
+    { label: pageLabels[pageName] || pageName },
+  ]);
+
+  // Lazy load
+  if (pageName === 'projects' && !projectsData.length) loadProjects();
+  if (pageName === 'profiler') populateProfilerSelect();
+  if (pageName === 'query') renderQueryHistory();
+}
+
 document.querySelectorAll('.nav-item').forEach(item => {
   item.addEventListener('click', () => {
-    document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-    item.classList.add('active');
-    const pageId = 'page-' + item.dataset.page;
-    document.getElementById(pageId).classList.add('active');
-
-    // Lazy load pages
-    if (item.dataset.page === 'projects' && !projectsData.length) loadProjects();
-    if (item.dataset.page === 'profiler') populateProfilerSelect();
+    navigateToPage(item.dataset.page);
   });
 });
 
-// ── Init ────────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════
+// INIT
+// ══════════════════════════════════════════════════════════════════════
 async function init() {
   try {
     const info = await api('/api/info');
@@ -1313,12 +4414,25 @@ async function init() {
   loadTables();
   loadTools();
   loadDatabases();
+  buildConnectionStrings();
+  renderQueryHistory();
+  measureLatency();
+
+  // Initial breadcrumbs
+  updateBreadcrumbs([
+    { label: 'Lakebase', onClick: "navigateToPage('explorer')" },
+    { label: 'Explorer' },
+  ]);
 }
 
-// ── Database Explorer ───────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════
+// DATABASE EXPLORER
+// ══════════════════════════════════════════════════════════════════════
+let lastSampleData = null;
+
 async function loadTables() {
   const list = document.getElementById('tableList');
-  list.innerHTML = '<li class="empty"><span class="spinner"></span></li>';
+  showSkeleton('tableList', 'list');
   try {
     tablesData = await api('/api/tables');
     if (!tablesData.length) {
@@ -1331,6 +4445,10 @@ async function loadTables() {
         <span class="count">${t.row_count >= 0 ? t.row_count.toLocaleString() : '--'}</span>
       </li>
     `).join('');
+
+    // Re-apply table search filter if present
+    const searchInput = document.getElementById('tableSearchInput');
+    if (searchInput && searchInput.value) filterTables(searchInput.value);
   } catch (e) {
     list.innerHTML = `<li class="empty" style="color:var(--red)">${escapeHtml(e.message)}</li>`;
   }
@@ -1345,6 +4463,14 @@ async function selectTable(name) {
   document.getElementById('tableDetailCard').style.display = '';
   document.getElementById('sampleCard').style.display = 'none';
   document.getElementById('tableDetailName').textContent = name;
+  lastSampleData = null;
+
+  // Update breadcrumbs
+  updateBreadcrumbs([
+    { label: 'Lakebase', onClick: "navigateToPage('explorer')" },
+    { label: 'Explorer', onClick: "navigateToPage('explorer')" },
+    { label: name },
+  ]);
 
   try {
     const detail = await api(`/api/tables/${encodeURIComponent(name)}`);
@@ -1358,6 +4484,7 @@ async function selectTable(name) {
         <td>${c.is_primary_key ? '<span class="badge badge-pk">PK</span>' : ''}</td>
       </tr>
     `).join('');
+    makeSortable(document.getElementById('columnsTable'));
   } catch (e) {
     document.querySelector('#columnsTable tbody').innerHTML = `<tr><td colspan="5" style="color:var(--red)">${escapeHtml(e.message)}</td></tr>`;
   }
@@ -1368,27 +4495,37 @@ async function loadSample() {
   const card = document.getElementById('sampleCard');
   const wrap = document.getElementById('sampleWrap');
   card.style.display = '';
-  wrap.innerHTML = '<div class="empty"><span class="spinner"></span></div>';
+  showSkeleton('sampleWrap', 'table');
   try {
     const rows = await api(`/api/tables/${encodeURIComponent(currentTable)}/sample?limit=20`);
+    lastSampleData = rows;
     document.getElementById('sampleCount').textContent = `${rows.length} rows`;
     if (!rows.length) { wrap.innerHTML = '<div class="empty">No data</div>'; return; }
     const cols = Object.keys(rows[0]);
-    wrap.innerHTML = `<table>
-      <thead><tr>${cols.map(c => `<th>${escapeHtml(c)}</th>`).join('')}</tr></thead>
-      <tbody>${rows.map(r => `<tr>${cols.map(c => {
-        let v = r[c];
-        if (v && typeof v === 'object') v = JSON.stringify(v);
-        const display = v === null ? '<span style="color:var(--text-muted)">null</span>' : escapeHtml(String(v).substring(0, 100));
-        return `<td>${display}</td>`;
-      }).join('')}</tr>`).join('')}</tbody>
-    </table>`;
+    wrap.innerHTML = `
+      <div style="display:flex;gap:8px;margin-bottom:8px;justify-content:flex-end">
+        <button class="btn btn-sm btn-secondary" onclick="exportCSV(lastSampleData, '${escapeHtml(currentTable)}_sample.csv')">Export CSV</button>
+        <button class="btn btn-sm btn-secondary" onclick="exportJSON(lastSampleData, '${escapeHtml(currentTable)}_sample.json')">Export JSON</button>
+      </div>
+      <table>
+        <thead><tr>${cols.map(c => `<th>${escapeHtml(c)}</th>`).join('')}</tr></thead>
+        <tbody>${rows.map(r => `<tr>${cols.map(c => {
+          let v = r[c];
+          if (v && typeof v === 'object') v = JSON.stringify(v);
+          const display = v === null ? '<span style="color:var(--text-muted)">null</span>' : escapeHtml(String(v).substring(0, 100));
+          return `<td>${display}</td>`;
+        }).join('')}</tr>`).join('')}</tbody>
+      </table>`;
   } catch (e) {
     wrap.innerHTML = `<div class="empty" style="color:var(--red)">${escapeHtml(e.message)}</div>`;
   }
 }
 
-// ── SQL Query ───────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════
+// SQL QUERY
+// ══════════════════════════════════════════════════════════════════════
+let lastQueryResult = null;
+
 async function runQuery() {
   const sql = document.getElementById('sqlInput').value.trim();
   if (!sql) return;
@@ -1406,23 +4543,40 @@ async function runQuery() {
     if (typeof rows === 'string') {
       resultDiv.innerHTML = `<div class="result error">${escapeHtml(rows)}</div>`;
       status.textContent = '';
+      addToQueryHistory(sql, 0, elapsed);
       return;
     }
     status.textContent = `${rows.length} rows in ${elapsed}ms`;
-    if (!rows.length) { resultDiv.innerHTML = '<div class="result">No results</div>'; return; }
+    lastQueryResult = rows;
+    addToQueryHistory(sql, rows.length, elapsed);
+
+    if (!rows.length) {
+      resultDiv.innerHTML = '<div class="result">No results</div>';
+      return;
+    }
     const cols = Object.keys(rows[0]);
-    resultDiv.innerHTML = `<div class="table-wrap" style="margin-top:12px"><table>
-      <thead><tr>${cols.map(c => `<th>${escapeHtml(c)}</th>`).join('')}</tr></thead>
-      <tbody>${rows.map(r => `<tr>${cols.map(c => {
-        let v = r[c];
-        if (v && typeof v === 'object') v = JSON.stringify(v);
-        const display = v === null ? '<span style="color:var(--text-muted)">null</span>' : escapeHtml(String(v).substring(0, 200));
-        return `<td>${display}</td>`;
-      }).join('')}</tr>`).join('')}</tbody>
-    </table></div>`;
+    resultDiv.innerHTML = `
+      <div style="display:flex;gap:8px;margin-top:12px;margin-bottom:8px;justify-content:flex-end">
+        <button class="btn btn-sm btn-secondary" onclick="exportCSV(lastQueryResult, 'query_result.csv')">Export CSV</button>
+        <button class="btn btn-sm btn-secondary" onclick="exportJSON(lastQueryResult, 'query_result.json')">Export JSON</button>
+        <button class="btn btn-sm btn-secondary" onclick="copyToClipboard(JSON.stringify(lastQueryResult, null, 2), this)">Copy JSON</button>
+      </div>
+      <div class="table-wrap"><table>
+        <thead><tr>${cols.map(c => `<th>${escapeHtml(c)}</th>`).join('')}</tr></thead>
+        <tbody>${rows.map(r => `<tr>${cols.map(c => {
+          let v = r[c];
+          if (v && typeof v === 'object') v = JSON.stringify(v);
+          const display = v === null ? '<span style="color:var(--text-muted)">null</span>' : escapeHtml(String(v).substring(0, 200));
+          return `<td>${display}</td>`;
+        }).join('')}</tr>`).join('')}</tbody>
+      </table></div>`;
+    // Apply syntax highlighting to any code blocks in results
+    highlightSQL(resultDiv);
   } catch (e) {
+    const elapsed = Date.now() - start;
     status.textContent = '';
     resultDiv.innerHTML = `<div class="result error">${escapeHtml(e.message)}</div>`;
+    addToQueryHistory(sql, -1, elapsed);
   }
 }
 
@@ -1431,7 +4585,9 @@ document.getElementById('sqlInput').addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); runQuery(); }
 });
 
-// ── MCP Tools ───────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════
+// MCP TOOLS
+// ══════════════════════════════════════════════════════════════════════
 const toolCategories = {
   'Database (READ)': ['list_tables', 'describe_table', 'read_query', 'list_schemas', 'get_connection_info'],
   'Data Operations (WRITE)': ['insert_record', 'update_records', 'delete_records', 'batch_insert'],
@@ -1442,6 +4598,9 @@ const toolCategories = {
   'Branch Management': ['create_branch', 'delete_branch'],
   'Autoscaling': ['configure_autoscaling', 'configure_scale_to_zero'],
   'Data Quality': ['profile_table'],
+  'Exploration': ['describe_branch', 'compare_database_schema', 'search'],
+  'Safe Migrations': ['prepare_database_migration', 'complete_database_migration'],
+  'Query Tuning': ['prepare_query_tuning', 'complete_query_tuning'],
 };
 
 function getToolBadge(name) {
@@ -1453,6 +4612,9 @@ function getToolBadge(name) {
   const branchTools = ['create_branch', 'delete_branch'];
   const scaleTools = ['configure_autoscaling', 'configure_scale_to_zero'];
   const qualityTools = ['profile_table'];
+  const exploreTools = ['describe_branch', 'compare_database_schema', 'search'];
+  const migrationTools = ['prepare_database_migration', 'complete_database_migration'];
+  const tuningTools = ['prepare_query_tuning', 'complete_query_tuning'];
 
   if (writeTools.includes(name)) return { cls: 'badge-write', label: 'WRITE' };
   if (ddlTools.includes(name)) return { cls: 'badge-ddl', label: 'DDL' };
@@ -1462,6 +4624,9 @@ function getToolBadge(name) {
   if (branchTools.includes(name)) return { cls: 'badge-branch', label: 'BRANCH' };
   if (scaleTools.includes(name)) return { cls: 'badge-scale', label: 'SCALE' };
   if (qualityTools.includes(name)) return { cls: 'badge-quality', label: 'QUALITY' };
+  if (exploreTools.includes(name)) return { cls: 'badge-infra', label: 'EXPLORE' };
+  if (migrationTools.includes(name)) return { cls: 'badge-scale', label: 'MIGRATION' };
+  if (tuningTools.includes(name)) return { cls: 'badge-ddl', label: 'TUNING' };
   return { cls: 'badge-read', label: 'READ' };
 }
 
@@ -1496,7 +4661,7 @@ async function loadTools() {
         const params = Object.entries(props).map(([k, v]) => {
           const req = required.includes(k);
           let typeStr = v.type || (v.oneOf ? v.oneOf.map(o => o.type).join(' | ') : '?');
-          return `<code style="font-family:var(--mono);font-size:11px">${k}</code>${req ? ' <span style="color:var(--red)">*</span>' : ''} <span style="color:var(--text-muted);font-size:11px">(${typeStr})</span>`;
+          return `<code style="font-family:var(--mono);font-size:11px">${escapeHtml(k)}</code>${req ? ' <span style="color:var(--red)">*</span>' : ''} <span style="color:var(--text-muted);font-size:11px">(${escapeHtml(typeStr)})</span>`;
         }).join(', ');
 
         html += `<div class="tool-card">
@@ -1535,7 +4700,7 @@ async function loadTools() {
     // Populate playground select
     const select = document.getElementById('playTool');
     select.innerHTML = '<option value="">Select a tool...</option>' +
-      toolsData.map(t => `<option value="${t.name}">${t.name}</option>`).join('');
+      toolsData.map(t => `<option value="${escapeHtml(t.name)}">${escapeHtml(t.name)}</option>`).join('');
   } catch (e) {
     document.getElementById('toolsList').innerHTML = `<div class="empty" style="color:var(--red)">${escapeHtml(e.message)}</div>`;
   }
@@ -1572,20 +4737,20 @@ function updatePlayForm() {
     if (isBool) {
       const def = v.default !== undefined ? v.default : false;
       return `<div class="form-group">
-        <label>${k}${req ? ' *' : ''} <span style="font-weight:normal;color:var(--text-muted)">${v.description || ''}</span></label>
-        <select id="play-${k}"><option value="true" ${def ? 'selected' : ''}>true</option><option value="false" ${!def ? 'selected' : ''}>false</option></select>
+        <label>${escapeHtml(k)}${req ? ' *' : ''} <span style="font-weight:normal;color:var(--text-muted)">${escapeHtml(v.description || '')}</span></label>
+        <select id="play-${escapeHtml(k)}"><option value="true" ${def ? 'selected' : ''}>true</option><option value="false" ${!def ? 'selected' : ''}>false</option></select>
       </div>`;
     }
     if (isObj || isArr) {
       const placeholder = isArr ? '[{"key": "value"}]' : '{"key": "value"}';
       return `<div class="form-group">
-        <label>${k}${req ? ' *' : ''} <span style="font-weight:normal;color:var(--text-muted)">${v.description || ''}</span></label>
-        <textarea id="play-${k}" placeholder='${placeholder}'></textarea>
+        <label>${escapeHtml(k)}${req ? ' *' : ''} <span style="font-weight:normal;color:var(--text-muted)">${escapeHtml(v.description || '')}</span></label>
+        <textarea id="play-${escapeHtml(k)}" placeholder='${placeholder}'></textarea>
       </div>`;
     }
     return `<div class="form-group">
-      <label>${k}${req ? ' *' : ''} <span style="font-weight:normal;color:var(--text-muted)">${v.description || ''}</span></label>
-      <input id="play-${k}" type="text" placeholder="${escapeHtml(v.description || k)}">
+      <label>${escapeHtml(k)}${req ? ' *' : ''} <span style="font-weight:normal;color:var(--text-muted)">${escapeHtml(v.description || '')}</span></label>
+      <input id="play-${escapeHtml(k)}" type="text" placeholder="${escapeHtml(v.description || k)}">
     </div>`;
   }).join('');
 }
@@ -1647,19 +4812,30 @@ async function runPlayTool() {
     configure_autoscaling: () => api(`/api/endpoints/${encodeURIComponent(args.endpoint)}/config`, { method: 'PATCH', body: JSON.stringify({ min_cu: args.min_cu, max_cu: args.max_cu }) }),
     configure_scale_to_zero: () => api(`/api/endpoints/${encodeURIComponent(args.endpoint)}/config`, { method: 'PATCH', body: JSON.stringify({ scale_to_zero: { enabled: args.enabled, idle_timeout_seconds: args.idle_timeout_seconds } }) }),
     profile_table:      () => api(`/api/profile/${encodeURIComponent(args.table_name)}`),
+    // New tool routes
+    describe_branch:    () => api('/api/execute', { method: 'POST', body: JSON.stringify({ sql: args.database ? `-- describe_branch for ${args.database}` : "SELECT schemaname, tablename FROM pg_tables WHERE schemaname NOT IN ('pg_catalog','information_schema') ORDER BY schemaname, tablename" }) }),
+    compare_database_schema: () => api('/api/execute', { method: 'POST', body: JSON.stringify(args) }),
+    prepare_database_migration: () => api('/api/execute', { method: 'POST', body: JSON.stringify(args) }),
+    complete_database_migration: () => api('/api/execute', { method: 'POST', body: JSON.stringify(args) }),
+    prepare_query_tuning: () => api('/api/explain', { method: 'POST', body: JSON.stringify({ sql: args.sql }) }),
+    complete_query_tuning: () => api('/api/execute', { method: 'POST', body: JSON.stringify(args) }),
+    search: () => api('/api/execute', { method: 'POST', body: JSON.stringify({ sql: `SELECT table_name FROM information_schema.tables WHERE table_name LIKE '%${(args.keyword || '').replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_').replace(/'/g, "''")}%'` }) }),
   };
 
   try {
     const handler = toolRoutes[name];
     if (!handler) { resultDiv.innerHTML = '<div class="result error">No REST route for this tool</div>'; return; }
     const resp = await handler();
-    resultDiv.innerHTML = `<div class="result success">${escapeHtml(JSON.stringify(resp, null, 2))}</div>`;
+    resultDiv.innerHTML = `<div class="result success"><pre><code>${escapeHtml(JSON.stringify(resp, null, 2))}</code></pre></div>`;
+    highlightSQL(resultDiv);
   } catch (e) {
     resultDiv.innerHTML = `<div class="result error">${escapeHtml(e.message)}</div>`;
   }
 }
 
-// ── Database Switcher ────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════
+// DATABASE SWITCHER
+// ══════════════════════════════════════════════════════════════════════
 async function loadDatabases() {
   const select = document.getElementById('dbSelect');
   const instanceLabel = document.getElementById('instanceLabel');
@@ -1694,11 +4870,12 @@ async function switchDatabase() {
       body: JSON.stringify({ database: newDb }),
     });
     statusText.textContent = 'Connected';
+    showToast(`Switched to database: ${newDb}`, 'success');
     loadTables();
     loadTools();
   } catch (e) {
     statusText.textContent = 'Switch failed';
-    alert('Failed to switch database: ' + e.message);
+    showToast('Failed to switch database: ' + e.message, 'error');
     loadDatabases();
   }
 }
@@ -1712,6 +4889,7 @@ async function switchInstance(instanceName) {
       body: JSON.stringify({ instance: instanceName }),
     });
     statusText.textContent = 'Connected';
+    showToast(`Connected to instance: ${instanceName}`, 'success');
     // Update instance label
     const instanceLabel = document.getElementById('instanceLabel');
     if (instanceLabel) {
@@ -1729,23 +4907,20 @@ async function switchInstance(instanceName) {
     loadTables();
     loadTools();
     // Navigate to Explorer page
-    document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-    const explorerNav = document.querySelector('.nav-item[data-page="explorer"]');
-    if (explorerNav) explorerNav.classList.add('active');
-    const explorerPage = document.getElementById('page-explorer');
-    if (explorerPage) explorerPage.classList.add('active');
+    navigateToPage('explorer');
   } catch (e) {
     statusText.textContent = 'Switch failed';
-    alert('Failed to switch instance: ' + e.message);
+    showToast('Failed to switch instance: ' + e.message, 'error');
     loadDatabases();
   }
 }
 
-// ── Projects ────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════
+// PROJECTS
+// ══════════════════════════════════════════════════════════════════════
 async function loadProjects() {
   const container = document.getElementById('projectsList');
-  container.innerHTML = '<div class="empty"><span class="spinner"></span> Loading instances...</div>';
+  showSkeleton('projectsList', 'cards');
   try {
     const data = await api('/api/projects');
     projectsData = Array.isArray(data) ? data : (data.projects || data.instances || []);
@@ -1755,7 +4930,8 @@ async function loadProjects() {
     }
 
     container.innerHTML = '<div class="card-grid">' + projectsData.map(p => {
-      const state = p.state || p.status || 'unknown';
+      const rawState = p.state || p.status || 'unknown';
+      const state = resolveState(rawState);
       const sc = stateClass(state);
       const instanceType = p.instance_type || 'unknown';
       const capacity = p.capacity || '';
@@ -1763,24 +4939,29 @@ async function loadProjects() {
       const createdAt = p.created_at ? new Date(p.created_at).toLocaleDateString() : '';
       const isAutoscaling = instanceType === 'autoscaling';
       const isProvisioned = instanceType === 'provisioned';
-      const name = escapeHtml(p.name || p.id);
+      const rawName = p.name || p.id;
+      const projectId = isAutoscaling && rawName.startsWith('projects/') ? rawName.replace('projects/', '') : rawName;
+      const displayName = escapeHtml(projectId);
       const clickHandler = isProvisioned
-        ? `onclick="switchInstance('${name}')"`
+        ? `onclick="switchInstance('${escapeHtml(projectId)}')"`
         : isAutoscaling
-          ? `onclick="navigateToBranches('${name}')"`
+          ? `onclick="navigateToBranches('${escapeHtml(rawName)}')"`
           : '';
-      const clickTitle = isProvisioned ? 'title="Click to connect"' : '';
+      const clickTitle = isProvisioned ? 'title="Click to connect"' : isAutoscaling ? 'title="View branches & endpoints"' : '';
+      const region = isAutoscaling && p.region ? `<div class="meta">Region: ${escapeHtml(p.region)}</div>` : '';
 
       return `<div class="mini-card" ${clickHandler} ${clickTitle} style="cursor:pointer">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-          <h3 style="margin:0">${name}</h3>
+          <h3 style="margin:0">${displayName}</h3>
           <span class="badge ${isProvisioned ? 'badge-type' : 'badge-read'}" style="font-size:10px">${instanceType.toUpperCase()}</span>
         </div>
         <div class="meta"><span class="status-dot-inline ${sc}"></span>${stateLabel(state)}</div>
         ${capacity ? `<div class="meta">Capacity: ${escapeHtml(String(capacity).replace('CU_', '').replace('_', ' '))} CU</div>` : ''}
         ${dns ? `<div class="meta" style="font-family:var(--mono);font-size:10px;word-break:break-all;margin-top:4px">${escapeHtml(dns)}</div>` : ''}
+        ${region}
         ${createdAt ? `<div class="meta">Created: ${createdAt}</div>` : ''}
         ${isProvisioned ? '<div class="meta" style="color:var(--neon-green);margin-top:6px;font-size:10px">Click to connect</div>' : ''}
+        ${isAutoscaling ? '<div class="meta" style="color:var(--text-secondary);margin-top:6px;font-size:10px">View branches &rarr;</div>' : ''}
       </div>`;
     }).join('') + '</div>';
 
@@ -1806,23 +4987,28 @@ function populateProjectSelects() {
 }
 
 function navigateToBranches(project) {
-  // Navigate to branches page with project pre-selected
-  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  const branchNav = document.querySelector('.nav-item[data-page="branches"]');
-  branchNav.classList.add('active');
-  document.getElementById('page-branches').classList.add('active');
+  navigateToPage('branches');
   populateProjectSelects();
   const sel = document.getElementById('branchProjectSelect');
   sel.value = project;
   loadBranches(project);
+
+  // Update breadcrumbs
+  updateBreadcrumbs([
+    { label: 'Lakebase', onClick: "navigateToPage('explorer')" },
+    { label: 'Projects', onClick: "navigateToPage('projects')" },
+    { label: project },
+    { label: 'Branches' },
+  ]);
 }
 
-// ── Branches ────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════
+// BRANCHES
+// ══════════════════════════════════════════════════════════════════════
 async function loadBranches(project) {
   if (!project) return;
   const container = document.getElementById('branchesList');
-  container.innerHTML = '<div class="empty"><span class="spinner"></span> Loading branches...</div>';
+  showSkeleton('branchesList', 'table');
   try {
     const data = await api(`/api/branches?project=${encodeURIComponent(project)}`);
     const branches = Array.isArray(data) ? data : (data.branches || []);
@@ -1869,6 +5055,7 @@ async function createBranch() {
   const resultDiv = document.getElementById('createBranchResult');
 
   if (!project || !branchId) {
+    showToast('Project and Branch ID are required', 'warning');
     resultDiv.innerHTML = '<div class="result error">Project and Branch ID are required.</div>';
     return;
   }
@@ -1879,32 +5066,44 @@ async function createBranch() {
       method: 'POST',
       body: JSON.stringify({ project, branch_id: branchId, parent_branch: parent || 'production' }),
     });
-    resultDiv.innerHTML = `<div class="result success">${escapeHtml(JSON.stringify(resp, null, 2))}</div>`;
+    resultDiv.innerHTML = `<div class="result success"><pre><code>${escapeHtml(JSON.stringify(resp, null, 2))}</code></pre></div>`;
+    showToast(`Branch "${branchId}" created successfully`, 'success');
     // Refresh branches list
     const sel = document.getElementById('branchProjectSelect');
     if (sel.value) loadBranches(sel.value);
   } catch (e) {
     resultDiv.innerHTML = `<div class="result error">${escapeHtml(e.message)}</div>`;
+    showToast('Failed to create branch: ' + e.message, 'error');
   }
 }
 
 async function deleteBranch(name) {
-  if (!confirm(`Are you sure you want to delete branch "${name}"? This action cannot be undone.`)) return;
+  const confirmed = await showModal(
+    'Delete Branch',
+    `Are you sure you want to delete branch "${name}"? This action cannot be undone.`,
+    null,
+    { danger: true, confirmText: 'Delete Branch' }
+  );
+  if (!confirmed) return;
+
   try {
     await api(`/api/branches/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    showToast(`Branch "${name}" deleted`, 'success');
     // Refresh
     const sel = document.getElementById('branchProjectSelect');
     if (sel.value) loadBranches(sel.value);
   } catch (e) {
-    alert('Failed to delete branch: ' + e.message);
+    showToast('Failed to delete branch: ' + e.message, 'error');
   }
 }
 
-// ── Endpoints ───────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════
+// ENDPOINTS
+// ══════════════════════════════════════════════════════════════════════
 async function loadEndpoints(project, branch) {
   if (!project) return;
   const container = document.getElementById('endpointsList');
-  container.innerHTML = '<div class="empty"><span class="spinner"></span> Loading endpoints...</div>';
+  showSkeleton('endpointsList', 'cards');
 
   let url = `/api/endpoints?project=${encodeURIComponent(project)}`;
   if (branch) url += `&branch=${encodeURIComponent(branch)}`;
@@ -1981,8 +5180,10 @@ async function updateEndpointConfig(epName) {
       body: JSON.stringify({ min_cu: minCu, max_cu: maxCu }),
     });
     resultDiv.innerHTML = `<div class="result success" style="font-size:11px;padding:8px;">${escapeHtml(JSON.stringify(resp))}</div>`;
+    showToast('Autoscaling config updated', 'success');
   } catch (e) {
     resultDiv.innerHTML = `<div class="result error" style="font-size:11px;padding:8px;">${escapeHtml(e.message)}</div>`;
+    showToast('Failed to update autoscaling: ' + e.message, 'error');
   }
 }
 
@@ -1997,12 +5198,16 @@ async function updateScaleToZero(epName) {
       body: JSON.stringify({ scale_to_zero: { enabled: enabled, idle_timeout_seconds: idleTimeout } }),
     });
     resultDiv.innerHTML = `<div class="result success" style="font-size:11px;padding:8px;">${escapeHtml(JSON.stringify(resp))}</div>`;
+    showToast('Scale-to-zero config updated', 'success');
   } catch (e) {
     resultDiv.innerHTML = `<div class="result error" style="font-size:11px;padding:8px;">${escapeHtml(e.message)}</div>`;
+    showToast('Failed to update scale-to-zero: ' + e.message, 'error');
   }
 }
 
-// ── Profiler ────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════
+// PROFILER
+// ══════════════════════════════════════════════════════════════════════
 function populateProfilerSelect() {
   const sel = document.getElementById('profilerTableSelect');
   if (!tablesData.length) return;
@@ -2014,7 +5219,7 @@ function populateProfilerSelect() {
 async function profileTable(tableName) {
   if (!tableName) return;
   const container = document.getElementById('profilerResult');
-  container.innerHTML = '<div class="empty"><span class="spinner"></span> Profiling table...</div>';
+  showSkeleton('profilerResult', 'table');
   try {
     const data = await api(`/api/profile/${encodeURIComponent(tableName)}`);
     const cols = Array.isArray(data) ? data : (data.columns || data.profile || []);
@@ -2059,7 +5264,159 @@ async function profileTable(tableName) {
   }
 }
 
-// ── Start ───────────────────────────────────────────────────────────
+// ── Missing onclick handlers ────────────────────────────────────────
+
+function closeModal() {
+  const overlay = document.getElementById('modalOverlay');
+  if (overlay) { overlay.classList.remove('active'); overlay.classList.remove('visible'); }
+}
+
+function confirmModal() {
+  closeModal();
+}
+
+function closeShortcuts() {
+  const overlay = document.getElementById('shortcutsOverlay');
+  if (overlay) { overlay.classList.remove('active'); overlay.classList.remove('visible'); }
+}
+
+function toggleMobileSidebar() {
+  const sidebar = document.querySelector('.sidebar');
+  const overlay = document.getElementById('sidebarOverlay');
+  sidebar.classList.toggle('mobile-open');
+  if (overlay) overlay.classList.toggle('active');
+}
+
+function closeMobileSidebar() {
+  const sidebar = document.querySelector('.sidebar');
+  const overlay = document.getElementById('sidebarOverlay');
+  sidebar.classList.remove('mobile-open');
+  if (overlay) overlay.classList.remove('active');
+}
+
+function toggleSidebar() {
+  const sidebar = document.querySelector('.sidebar');
+  if (!sidebar) return;
+  sidebar.classList.toggle('collapsed');
+  const isCollapsed = sidebar.classList.contains('collapsed');
+  localStorage.setItem('lakebase_sidebar_collapsed', String(isCollapsed));
+  const btn = document.getElementById('sidebarCollapseBtn');
+  if (btn) btn.title = isCollapsed ? 'Expand sidebar' : 'Collapse sidebar';
+}
+
+function navigateTo(pageName) {
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  const navItem = document.querySelector(`.nav-item[data-page="${pageName}"]`);
+  if (navItem) navItem.classList.add('active');
+  const page = document.getElementById('page-' + pageName);
+  if (page) page.classList.add('active');
+  if (pageName === 'projects' && !projectsData.length) loadProjects();
+  if (pageName === 'profiler') populateProfilerSelect();
+  updateBreadcrumbs([{label: pageName.charAt(0).toUpperCase() + pageName.slice(1)}]);
+}
+
+function refreshExplorer() {
+  const btn = document.getElementById('explorerRefreshBtn');
+  if (btn) btn.classList.add('refreshing');
+  loadTables().finally(() => { if (btn) btn.classList.remove('refreshing'); });
+}
+
+function copyTableName() {
+  if (currentTable) {
+    copyToClipboard(currentTable);
+  }
+}
+
+function tableToData(table) {
+  const headers = Array.from(table.querySelectorAll('th')).map(th => th.textContent.trim());
+  const rows = [];
+  table.querySelectorAll('tbody tr').forEach(tr => {
+    const row = {};
+    tr.querySelectorAll('td').forEach((td, i) => {
+      row[headers[i]] = td.textContent.trim();
+    });
+    rows.push(row);
+  });
+  return rows;
+}
+
+function exportSampleData(format) {
+  if (!currentTable) return;
+  const wrap = document.getElementById('sampleWrap');
+  const table = wrap?.querySelector('table');
+  if (!table) { showToast('No sample data to export', 'warning'); return; }
+  const data = tableToData(table);
+  if (format === 'json') exportJSON(data, currentTable + '_sample.json');
+  else exportCSV(data, currentTable + '_sample.csv');
+}
+
+function copyConnectionString() {
+  const val = document.getElementById('connStringValue');
+  if (val) copyToClipboard(val.textContent);
+}
+
+function switchConnTab(tab) {
+  document.querySelectorAll('.conn-string-tab').forEach(t => t.classList.remove('active'));
+  const activeTab = document.querySelector(`.conn-string-tab[data-tab="${tab}"]`);
+  if (activeTab) activeTab.classList.add('active');
+  const valueEl = document.getElementById('connStringValue');
+  if (!valueEl || !window._connStrings) return;
+  valueEl.textContent = window._connStrings[tab] || 'Not available';
+}
+
+function copyConnectionInfo() {
+  const el = document.getElementById('connInfoContent');
+  if (el) copyToClipboard(el.textContent);
+}
+
+function toggleQueryHistory() {
+  const panel = document.getElementById('queryHistoryPanel');
+  if (panel) panel.classList.toggle('collapsed');
+}
+
+function exportQueryResults(format) {
+  const resultDiv = document.getElementById('queryResult');
+  const table = resultDiv?.querySelector('table');
+  if (!table) { showToast('No query results to export', 'warning'); return; }
+  const data = tableToData(table);
+  if (format === 'json') exportJSON(data, 'query_results.json');
+  else exportCSV(data, 'query_results.csv');
+}
+
+function refreshProjects() {
+  const btn = document.getElementById('projectsRefreshBtn');
+  if (btn) btn.classList.add('refreshing');
+  projectsData = [];
+  loadProjects().finally(() => { if (btn) btn.classList.remove('refreshing'); });
+}
+
+function refreshBranches() {
+  const btn = document.getElementById('branchesRefreshBtn');
+  if (btn) btn.classList.add('refreshing');
+  const sel = document.getElementById('branchProjectSelect');
+  if (sel?.value) {
+    loadBranches(sel.value).finally(() => { if (btn) btn.classList.remove('refreshing'); });
+  } else {
+    if (btn) btn.classList.remove('refreshing');
+  }
+}
+
+function refreshEndpoints() {
+  const btn = document.getElementById('endpointsRefreshBtn');
+  if (btn) btn.classList.add('refreshing');
+  const projSel = document.getElementById('endpointProjectSelect');
+  const branchSel = document.getElementById('endpointBranchSelect');
+  if (projSel?.value) {
+    loadEndpoints(projSel.value, branchSel?.value).finally(() => { if (btn) btn.classList.remove('refreshing'); });
+  } else {
+    if (btn) btn.classList.remove('refreshing');
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// START — theme & sidebar are restored by IIFEs at top of script
+// ══════════════════════════════════════════════════════════════════════
 init();
 </script>
 </body>

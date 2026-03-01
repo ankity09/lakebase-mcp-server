@@ -4,13 +4,15 @@ A reusable [Model Context Protocol](https://modelcontextprotocol.io) (MCP) serve
 
 ## What It Does
 
-- Exposes **27 MCP tools** for schema inspection, CRUD, general SQL, DDL, transactions, query analysis, performance monitoring, infrastructure management, branch management, autoscaling config, and data quality profiling
+- Exposes **34 MCP tools** with safety annotations for schema inspection, CRUD, general SQL, DDL, transactions, query analysis, performance monitoring, infrastructure management, branch management, autoscaling config, data quality profiling, safe migrations, query tuning, and cross-database search
 - **2 MCP resources** for table and schema discovery
 - **3 MCP prompts** for database exploration, schema design, and query optimization
+- **MCP tool annotations** (`readOnlyHint`, `destructiveHint`, `idempotentHint`) on every tool for client-side safety UI
 - Supports both **provisioned** and **autoscaling** Lakebase instances with automatic token refresh
+- **Multi-instance switching** — browse and switch between all Lakebase instances in the workspace from the UI
 - Works as an **External MCP Server** agent in Databricks Multi-Agent Supervisors (MAS)
-- Includes a **web UI** with database explorer, SQL editor, tool playground, database switcher, and documentation
-- Provides a **REST API** (29 endpoints) for custom integrations
+- Includes a **web UI** with database explorer, SQL editor, tool playground, instance/database switcher, and documentation
+- Provides a **REST API** (29+ endpoints) for custom integrations
 
 ## Architecture
 
@@ -22,12 +24,13 @@ AI Agent (MAS / Claude Code / etc.)
 Lakebase MCP Server (Databricks App)
     |-- /          Web UI (explorer, SQL editor, tool playground, docs)
     |-- /mcp/      MCP endpoint (stateless StreamableHTTP)
-    |-- /api/*     REST API (29 endpoints)
+    |-- /db/{db}/mcp/  MCP endpoint scoped to a specific database
+    |-- /api/*     REST API (29+ endpoints)
     |-- /health    Health check
     |
     | psycopg2 (PostgreSQL wire protocol + auto token refresh)
     v
-Lakebase Instance (Provisioned or Autoscaling)
+Lakebase Instance(s) (Provisioned or Autoscaling)
 ```
 
 ## Connection Modes
@@ -105,7 +108,26 @@ databricks apps create lakebase-mcp-server --profile=<PROFILE>
 
 ### Step 2: Configure `app.yaml`
 
-Edit `app/app.yaml` with your Lakebase instance details (see [Connection Modes](#connection-modes) above).
+Edit `app/app.yaml` with your Lakebase instance details (see [Connection Modes](#connection-modes) above). You can configure multiple database resources if you want the platform to auto-inject credentials for several instances:
+
+```yaml
+command:
+  - python
+  - mcp_server.py
+
+resources:
+  - name: database
+    database:
+      instance_name: my-instance
+      database_name: my_database
+      permission: CAN_CONNECT_AND_CREATE
+  # Optional: add more databases for auto-configured access
+  - name: database-2
+    database:
+      instance_name: another-instance
+      database_name: another_db
+      permission: CAN_CONNECT_AND_CREATE
+```
 
 ### Step 3: Sync and Deploy
 
@@ -120,32 +142,102 @@ databricks apps deploy lakebase-mcp-server \
   --profile=<PROFILE>
 ```
 
-### Step 4: Grant Permissions
+### Step 4: Grant App Permissions
 
 ```bash
 # Required for MAS MCP proxy to access the app
 databricks api patch /api/2.0/permissions/apps/lakebase-mcp-server \
   --json '{"access_control_list":[{"group_name":"users","permission_level":"CAN_USE"}]}' \
   --profile=<PROFILE>
+```
 
-# Grant table access to the app's service principal
-# (get SP client ID from: databricks apps get lakebase-mcp-server --profile=<PROFILE>)
-databricks psql my-instance --profile=<PROFILE> -- -d my_database -c "
-GRANT ALL ON ALL TABLES IN SCHEMA public TO \"<app-sp-client-id>\";
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO \"<app-sp-client-id>\";
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO \"<app-sp-client-id>\";
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO \"<app-sp-client-id>\";
+### Step 5: Grant the App SP Access to Lakebase Instances
+
+The app runs as a service principal (SP). You need to grant this SP access on every Lakebase instance it will connect to. There are two parts: **creating the role** and **configuring the security label** for OAuth authentication.
+
+#### 5a: Get the App's Service Principal Info
+
+```bash
+databricks apps get lakebase-mcp-server --profile=<PROFILE>
+```
+
+From the output, note:
+- `service_principal_client_id` — e.g. `ecbb98b7-7186-43cf-ab8d-ac56bffc0f8e` (used as the PostgreSQL role name)
+- `service_principal_id` — e.g. `70866217708507` (numeric ID, used in the security label)
+
+#### 5b: For Each Lakebase Instance in `app.yaml`
+
+Instances listed as `resources` in `app.yaml` are **automatically configured** by Databricks — the role, security label, and grants are set up when the app deploys. No manual action needed for these.
+
+#### 5c: For Additional Instances (not in `app.yaml`)
+
+If you want the app to switch to Lakebase instances that are **not** in `app.yaml` (via the UI instance switcher), you must manually create the role, security label, and grants on each one:
+
+```bash
+# Replace these with your values
+SP_CLIENT_ID="ecbb98b7-7186-43cf-ab8d-ac56bffc0f8e"   # from step 5a
+SP_ID="70866217708507"                                   # from step 5a
+INSTANCE="my-other-instance"                             # target instance name
+PROFILE="my-profile"                                     # Databricks CLI profile
+
+databricks psql $INSTANCE --profile=$PROFILE -- -c "
+-- 1. Create the role (idempotent — skips if exists)
+DO \$\$ BEGIN
+  CREATE ROLE \"$SP_CLIENT_ID\" WITH LOGIN;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END \$\$;
+
+-- 2. Configure OAuth security label (required for token auth)
+SECURITY LABEL FOR \"databricks_auth\" ON ROLE \"$SP_CLIENT_ID\"
+  IS 'id=$SP_ID,type=SERVICE_PRINCIPAL';
+
+-- 3. Grant access to existing objects
+GRANT ALL ON ALL TABLES IN SCHEMA public TO \"$SP_CLIENT_ID\";
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO \"$SP_CLIENT_ID\";
+
+-- 4. Grant access to future objects
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+  GRANT ALL ON TABLES TO \"$SP_CLIENT_ID\";
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+  GRANT USAGE, SELECT ON SEQUENCES TO \"$SP_CLIENT_ID\";
 "
 ```
 
-### Step 5: Verify
+**All three steps are required:**
+1. `CREATE ROLE ... WITH LOGIN` — creates the PostgreSQL role
+2. `SECURITY LABEL FOR "databricks_auth"` — maps the OAuth token to the role (without this, you get `no role security label is configured`)
+3. `GRANT` statements — gives the role permission to read/write tables
+
+To grant access on **all** instances at once:
+
+```bash
+SP_CLIENT_ID="ecbb98b7-7186-43cf-ab8d-ac56bffc0f8e"
+SP_ID="70866217708507"
+PROFILE="my-profile"
+
+for INSTANCE in instance-a instance-b instance-c; do
+  echo "=== $INSTANCE ==="
+  databricks psql $INSTANCE --profile=$PROFILE -- -c "
+  DO \$\$ BEGIN
+    CREATE ROLE \"$SP_CLIENT_ID\" WITH LOGIN;
+  EXCEPTION WHEN duplicate_object THEN NULL;
+  END \$\$;
+  SECURITY LABEL FOR \"databricks_auth\" ON ROLE \"$SP_CLIENT_ID\"
+    IS 'id=$SP_ID,type=SERVICE_PRINCIPAL';
+  GRANT ALL ON ALL TABLES IN SCHEMA public TO \"$SP_CLIENT_ID\";
+  GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO \"$SP_CLIENT_ID\";
+  "
+done
+```
+
+### Step 6: Verify
 
 ```bash
 curl https://<app-url>/health
 # {"status":"ok","lakebase":true}
 
 curl https://<app-url>/api/tools | python3 -c "import sys,json; print(len(json.load(sys.stdin)), 'tools')"
-# 27 tools
+# 34 tools
 ```
 
 Visit `https://<app-url>/` for the web UI.
@@ -177,7 +269,7 @@ In your MAS Supervisor configuration:
 2. Select the UC HTTP connection from Step 1
 3. Set the agent description (this is what the supervisor uses for routing):
    > "Execute Lakebase database operations — read and write to operational tables including inventory, shipments, orders, and supply chain data."
-4. Click **Rediscover tools** — the supervisor will detect all 27 MCP tools
+4. Click **Rediscover tools** — the supervisor will detect all 34 MCP tools
 
 ### Step 3: Test
 
@@ -186,6 +278,7 @@ In the MAS playground, try:
 - "Show me the top 10 rows from the orders table"
 - "Insert a new record into the notes table"
 - "Create a table called alerts with columns: id, severity, message, created_at"
+- "Prepare a migration to add a status column to the orders table"
 
 The supervisor will route these requests to the Lakebase MCP agent, which executes them against your database and returns structured results.
 
@@ -200,7 +293,7 @@ The agent description determines when the supervisor routes requests to this age
 # Specific (better routing for supply chain use case)
 "Execute database operations on supply chain tables: inventory_levels, shipments,
 purchase_orders, demand_forecasts, routes, warehouses, notes. Supports reads, writes,
-DDL, transactions, query analysis, infrastructure management, and data quality profiling."
+DDL, transactions, query analysis, safe migrations, query tuning, and data quality profiling."
 ```
 
 ## Multi-Database Routing
@@ -233,97 +326,125 @@ Deploy one Lakebase MCP Server app, then create separate UC HTTP connections for
 
 Each MAS Supervisor connects to the same app URL but with a different `base_path`. The server creates isolated connection pools per database on demand.
 
-### UC HTTP Connection for Multi-Database
+## MCP Tools (34)
 
-When creating the UC HTTP connection (see [Connecting to MAS](#connecting-to-mas)), set:
-
-- **Base path**: `/db/{database}/mcp/` (instead of `/mcp/`)
-
-Everything else (host, port, auth) stays the same.
-
-### Verify Per-Database Health
-
-```bash
-curl https://<app-url>/db/supply_chain_db/health
-# {"status":"ok","lakebase":true,"database":"supply_chain_db"}
-
-curl https://<app-url>/db/finance_db/health
-# {"status":"ok","lakebase":true,"database":"finance_db"}
-```
-
-## MCP Tools (27)
+All tools include MCP annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`) so clients can display safety warnings before destructive operations.
 
 ### Schema Inspection (READ)
 
-| Tool | Description |
-|------|-------------|
-| `list_tables` | List all tables with row counts and column counts |
-| `describe_table` | Column names, data types, nullability, defaults, primary keys |
-| `list_schemas` | List all schemas in the database (not just public) |
-| `get_connection_info` | Host, port, database, user, connection mode (no password) |
+| Tool | Annotations | Description |
+|------|-------------|-------------|
+| `list_tables` | read-only, idempotent | List all tables with row counts and column counts |
+| `describe_table` | read-only, idempotent | Column names, data types, nullability, defaults, primary keys |
+| `list_schemas` | read-only, idempotent | List all schemas in the database (not just public) |
+| `get_connection_info` | read-only, idempotent | Host, port, database, user, connection mode (no password) |
 
 ### Data Operations (READ/WRITE)
 
-| Tool | Description |
-|------|-------------|
-| `read_query` | Execute read-only SELECT queries (configurable row limit via `MAX_ROWS` env, default 1000) |
-| `insert_record` | Insert a single record with parameterized values. JSONB-aware |
-| `update_records` | Update rows matching a WHERE condition (WHERE required) |
-| `delete_records` | Delete rows matching a WHERE condition (WHERE required) |
-| `batch_insert` | Insert multiple records in one statement. JSONB-aware |
+| Tool | Annotations | Description |
+|------|-------------|-------------|
+| `read_query` | read-only, idempotent | Execute read-only SELECT queries (configurable row limit via `MAX_ROWS` env, default 1000) |
+| `insert_record` | write | Insert a single record with parameterized values. JSONB-aware |
+| `update_records` | write | Update rows matching a WHERE condition (WHERE required) |
+| `delete_records` | write, destructive | Delete rows matching a WHERE condition (WHERE required) |
+| `batch_insert` | write | Insert multiple records in one statement. JSONB-aware |
 
 ### General SQL
 
-| Tool | Description |
-|------|-------------|
-| `execute_sql` | Execute any SQL (SELECT/INSERT/UPDATE/DELETE/DDL). Auto-detects type, returns structured results |
-| `execute_transaction` | Multi-statement atomic transaction. All succeed or all roll back. Returns per-statement results |
-| `explain_query` | EXPLAIN ANALYZE with JSON output. Wraps writes in transaction + rollback to prevent side effects |
+| Tool | Annotations | Description |
+|------|-------------|-------------|
+| `execute_sql` | write, destructive | Execute any SQL (SELECT/INSERT/UPDATE/DELETE/DDL). Auto-detects type, returns structured results |
+| `execute_transaction` | write, destructive | Multi-statement atomic transaction. All succeed or all roll back. Returns per-statement results |
+| `explain_query` | read-only, idempotent | EXPLAIN ANALYZE with JSON output. Wraps writes in transaction + rollback to prevent side effects |
 
 ### DDL
 
-| Tool | Description |
-|------|-------------|
-| `create_table` | CREATE TABLE with column definitions array. Supports IF NOT EXISTS |
-| `drop_table` | DROP TABLE with `confirm=true` safety gate. Supports IF EXISTS |
-| `alter_table` | Add column, drop column, rename column, or alter column type |
+| Tool | Annotations | Description |
+|------|-------------|-------------|
+| `create_table` | write, idempotent | CREATE TABLE with column definitions array. Supports IF NOT EXISTS |
+| `drop_table` | write, destructive | DROP TABLE with `confirm=true` safety gate. Supports IF EXISTS |
+| `alter_table` | write, destructive | Add column, drop column, rename column, or alter column type |
 
 ### Performance
 
-| Tool | Description |
-|------|-------------|
-| `list_slow_queries` | Top N slow queries from pg_stat_statements. Graceful error if extension not enabled |
+| Tool | Annotations | Description |
+|------|-------------|-------------|
+| `list_slow_queries` | read-only, idempotent | Top N slow queries from pg_stat_statements. Graceful error if extension not enabled |
 
 ### Infrastructure Management (INFRA)
 
-| Tool | Description |
-|------|-------------|
-| `list_projects` | List all Lakebase projects with status, branch count, endpoint info |
-| `describe_project` | Project details including branches, endpoints, and configuration |
-| `get_connection_string` | Build psql/psycopg2/jdbc connection string for an endpoint |
-| `list_branches` | List branches on a project with state and creation time |
-| `list_endpoints` | List endpoints on a branch with host, state, compute config |
-| `get_endpoint_status` | Endpoint state, host, and compute configuration |
+| Tool | Annotations | Description |
+|------|-------------|-------------|
+| `list_projects` | read-only, idempotent | List all Lakebase projects (provisioned + autoscaling) with status |
+| `describe_project` | read-only, idempotent | Project details including branches, endpoints, and configuration |
+| `get_connection_string` | read-only, idempotent | Build psql/psycopg2/jdbc connection string for an endpoint |
+| `list_branches` | read-only, idempotent | List branches on a project with state and creation time |
+| `list_endpoints` | read-only, idempotent | List endpoints on a branch with host, state, compute config |
+| `get_endpoint_status` | read-only, idempotent | Endpoint state, host, and compute configuration |
 
 ### Branch Management (BRANCH)
 
-| Tool | Description |
-|------|-------------|
-| `create_branch` | Create a dev/test branch from a parent branch |
-| `delete_branch` | Delete a branch with `confirm=true` safety gate (cannot delete production) |
+| Tool | Annotations | Description |
+|------|-------------|-------------|
+| `create_branch` | write | Create a dev/test branch from a parent branch |
+| `delete_branch` | write, destructive | Delete a branch with `confirm=true` safety gate (cannot delete production) |
 
 ### Autoscaling Configuration (SCALE)
 
-| Tool | Description |
-|------|-------------|
-| `configure_autoscaling` | Set min/max compute units (CU) on an autoscaling endpoint |
-| `configure_scale_to_zero` | Enable/disable scale-to-zero (suspend) with configurable idle timeout |
+| Tool | Annotations | Description |
+|------|-------------|-------------|
+| `configure_autoscaling` | write, idempotent | Set min/max compute units (CU) on an autoscaling endpoint |
+| `configure_scale_to_zero` | write, idempotent | Enable/disable scale-to-zero (suspend) with configurable idle timeout |
 
 ### Data Quality (QUALITY)
 
-| Tool | Description |
-|------|-------------|
-| `profile_table` | Column-level profiling: row count, null counts/%, distinct counts, min/max, avg for numerics |
+| Tool | Annotations | Description |
+|------|-------------|-------------|
+| `profile_table` | read-only, idempotent | Column-level profiling: row count, null counts/%, distinct counts, min/max, avg for numerics |
+
+### Safe Migrations (MIGRATION)
+
+Two-phase migration workflow: validate first, then apply or discard.
+
+| Tool | Annotations | Description |
+|------|-------------|-------------|
+| `prepare_database_migration` | write | Phase 1: Dry-run migration SQL in a rolled-back transaction. Returns validation results, affected tables, and a `migration_id` |
+| `complete_database_migration` | write, destructive | Phase 2: Apply the validated migration for real, or discard it. Requires `migration_id` from phase 1 |
+
+**Usage:**
+```
+1. Call prepare_database_migration(migration_sql="ALTER TABLE orders ADD COLUMN status TEXT DEFAULT 'pending'")
+   → Returns: migration_id, validation results, tables affected
+2. Review the results
+3. Call complete_database_migration(migration_id="abc123", apply_changes=true)
+   → Applies the migration for real
+```
+
+### Query Tuning (TUNING)
+
+Two-phase query tuning: analyze and suggest indexes first, then apply or discard.
+
+| Tool | Annotations | Description |
+|------|-------------|-------------|
+| `prepare_query_tuning` | write | Phase 1: Run EXPLAIN ANALYZE, detect seq scans, suggest indexes. Returns `tuning_id` and suggestions |
+| `complete_query_tuning` | write, destructive | Phase 2: Apply suggested DDL (e.g. CREATE INDEX) or discard. Shows before/after execution plan |
+
+**Usage:**
+```
+1. Call prepare_query_tuning(sql="SELECT * FROM orders WHERE customer_id = 42")
+   → Returns: tuning_id, execution plan, suggestions (e.g. "add index on customer_id")
+2. Review suggestions
+3. Call complete_query_tuning(tuning_id="xyz789", apply_changes=true, ddl_statements=["CREATE INDEX idx_orders_customer ON orders(customer_id)"])
+   → Applies the index and shows the improved execution plan
+```
+
+### Exploration (EXPLORE)
+
+| Tool | Annotations | Description |
+|------|-------------|-------------|
+| `describe_branch` | read-only, idempotent | Tree view of all objects in a database: schemas, tables, views, functions, sequences, indexes |
+| `compare_database_schema` | read-only, idempotent | Compare schemas between two databases. Returns unified diff of added/dropped/modified tables and columns |
+| `search` | read-only, idempotent | Search across all Lakebase instances, databases, and tables by keyword |
 
 ## MCP Resources (2)
 
@@ -347,7 +468,7 @@ The root URL (`/`) serves a Neon.tech-inspired single-page application with fixe
 **Database**
 - **Database Explorer** — Browse tables, view column schemas and constraints, sample data
 - **SQL Query** — Run read-only queries with tabular results (Ctrl/Cmd+Enter to execute)
-- **MCP Tools** — Tool reference cards categorized by type + interactive playground for all 27 tools
+- **MCP Tools** — Tool reference cards categorized by type + interactive playground for all 34 tools
 
 **Infrastructure**
 - **Projects** — Card grid of Lakebase projects with status badges and branch counts
@@ -360,9 +481,9 @@ The root URL (`/`) serves a Neon.tech-inspired single-page application with fixe
 **Reference**
 - **Documentation** — Deployment guide, MAS connection instructions, REST API reference
 
-The sidebar includes a **database switcher** dropdown and live connection status indicator.
+The sidebar includes an **instance switcher** (switch between all Lakebase instances), a **database switcher** dropdown, and a live connection status indicator.
 
-## REST API (29 endpoints)
+## REST API (29+ endpoints)
 
 ### Core
 
@@ -372,12 +493,13 @@ The sidebar includes a **database switcher** dropdown and live connection status
 | `/api/tools` | GET | List all MCP tools with input schemas |
 | `/health` | GET | Health check |
 
-### Database Management
+### Instance & Database Management
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/databases` | GET | List available databases on the instance |
+| `/api/databases` | GET | List available databases on the current instance |
 | `/api/databases/switch` | POST | Switch to a different database |
+| `/api/instances/switch` | POST | Switch to a different Lakebase instance (provisioned or autoscaling) |
 
 ### Tables
 
@@ -426,6 +548,7 @@ This server is fully generic. To point it at a different Lakebase database:
 
 1. **Provisioned**: Change `instance_name` and `database_name` in `app.yaml`
 2. **Autoscaling**: Change the `LAKEBASE_PROJECT` / `LAKEBASE_DATABASE` env vars
+3. **Multi-instance**: Add multiple `resources` in `app.yaml`, or grant the app SP on additional instances (see [Step 5](#step-5-grant-the-app-sp-access-to-lakebase-instances))
 
 No code changes needed. The web UI, MCP tools, and REST API work with any Lakebase database.
 
@@ -466,6 +589,8 @@ Server starts on port 8000. MCP endpoint: `http://localhost:8000/mcp/`. Web UI: 
 5. **CAN_USE for users group**: The MAS MCP proxy needs `CAN_USE` on the app. Grant to the `users` group.
 6. **Autoscaling scale-to-zero**: If the autoscaling endpoint is suspended, the first request may take 2-5 seconds while compute wakes up.
 7. **Database switcher**: Switching databases reinitializes the connection pool. The table cache is cleared automatically.
+8. **Instance switcher — role + security label**: When switching to an instance not in `app.yaml`, the app's SP must have both a PostgreSQL role AND a `databricks_auth` security label on that instance. See [Step 5c](#5c-for-additional-instances-not-in-appyaml). Without the security label, you get: `no role security label is configured`.
+9. **Migration state expiry**: Prepared migrations/tuning sessions expire after 1 hour if not completed. Call `prepare_*` again to create a new session.
 
 ## Environment Variables
 

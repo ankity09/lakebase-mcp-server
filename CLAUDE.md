@@ -1,6 +1,6 @@
 # Lakebase MCP Server — Databricks App
 
-Reusable MCP server that exposes Lakebase (PostgreSQL) read/write operations as 27 MCP tools, 2 resources, and 3 prompts. Supports both provisioned Lakebase (via app.yaml database resource) and autoscaling Lakebase (via env vars). Token refresh is automatic. Deploy as a Databricks App, then connect it to a MAS Supervisor as an External MCP Server agent. Includes a web UI for exploring the database and testing tools.
+Reusable MCP server that exposes Lakebase (PostgreSQL) read/write operations as 34 MCP tools (with safety annotations), 2 resources, and 3 prompts. Supports both provisioned Lakebase (via app.yaml database resource) and autoscaling Lakebase (via env vars). Token refresh is automatic. Deploy as a Databricks App, then connect it to a MAS Supervisor as an External MCP Server agent. Includes a web UI for exploring the database and testing tools.
 
 ## Architecture
 
@@ -85,7 +85,9 @@ env:
 
 No database resource needed — the server handles everything including endpoint discovery and token refresh.
 
-## MCP Tools (27)
+## MCP Tools (34)
+
+All tools include MCP annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`) for client-side safety UI.
 
 | Tool | Type | Description |
 |------|------|-------------|
@@ -116,6 +118,13 @@ No database resource needed — the server handles everything including endpoint
 | `configure_autoscaling` | SCALE | Set min/max compute units on an endpoint |
 | `configure_scale_to_zero` | SCALE | Enable/disable suspend + idle timeout |
 | `profile_table` | QUALITY | Column-level profiling: nulls, distinct, min/max, avg |
+| `describe_branch` | EXPLORE | Tree view of all objects in a database: schemas, tables, views, functions, sequences, indexes |
+| `compare_database_schema` | EXPLORE | Compare schemas between two databases, returns unified diff |
+| `prepare_database_migration` | MIGRATION | Phase 1: Dry-run migration SQL in rolled-back transaction, returns migration_id |
+| `complete_database_migration` | MIGRATION | Phase 2: Apply or discard a validated migration using migration_id |
+| `prepare_query_tuning` | TUNING | Phase 1: EXPLAIN ANALYZE + seq scan detection + index suggestions, returns tuning_id |
+| `complete_query_tuning` | TUNING | Phase 2: Apply suggested DDL (e.g. CREATE INDEX) or discard, shows before/after plan |
+| `search` | EXPLORE | Search across all Lakebase instances, databases, and tables by keyword |
 
 ## MCP Resources (2)
 
@@ -264,7 +273,7 @@ Visit `https://<app-url>/` for the web UI.
    - Connection: the UC HTTP connection above
    - Description: "Execute Lakebase database operations — CRUD on operational tables"
 
-3. Click "Rediscover tools" in MAS config to detect the 27 MCP tools.
+3. Click "Rediscover tools" in MAS config to detect the 34 MCP tools.
 
 ## Known Gotchas
 
@@ -275,6 +284,8 @@ Visit `https://<app-url>/` for the web UI.
 5. **CAN_USE for users group:** MAS MCP proxy needs CAN_USE on the app. Grant to `users` group.
 6. **Autoscaling scale-to-zero:** If the autoscaling endpoint is suspended, the first request may take 2-5 seconds while compute wakes up.
 7. **Database switcher:** Switching databases reinitializes the connection pool. The table cache is cleared automatically.
+8. **Instance switcher — role + security label:** When switching to an instance not in `app.yaml`, the app's SP must have both a PostgreSQL role AND a `databricks_auth` security label on that instance. Without the security label: `no role security label is configured`.
+9. **Migration state expiry:** Prepared migrations/tuning sessions expire after 1 hour if not completed.
 
 ## Local Development
 

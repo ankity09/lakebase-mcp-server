@@ -3,7 +3,7 @@
 Usage:
     python test_mcp.py --profile simplot-v1
 
-Runs through all 16 MCP tools and verifies they work correctly.
+Runs through all 34 MCP tools and verifies they work correctly.
 """
 
 import argparse
@@ -104,7 +104,7 @@ def main():
     tools = mcp_call(url, token, "tools/list", {}, 2)
     tool_names = [t["name"] for t in tools["result"]["tools"]]
     print(f"  Tools: {tool_names}")
-    assert len(tool_names) == 16, f"Expected 16 tools, got {len(tool_names)}"
+    assert len(tool_names) == 34, f"Expected 34 tools, got {len(tool_names)}"
     print("  PASS\n")
 
     # 4. list_tables

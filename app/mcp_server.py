@@ -1,7 +1,7 @@
 """Reusable Lakebase MCP Server — Databricks App.
 
-Exposes 27 MCP tools, 2 resources, and 3 prompts over StreamableHTTP
-at /mcp.  Supports both provisioned and autoscaling Lakebase instances.
+Exposes 34 MCP tools (with annotations), 2 resources, and 3 prompts over
+StreamableHTTP at /mcp.  Supports both provisioned and autoscaling Lakebase.
 
 Connection modes (auto-detected):
   - Provisioned: Set PGHOST via app.yaml database resource (standard)
@@ -9,15 +9,18 @@ Connection modes (auto-detected):
     LAKEBASE_ENDPOINT, LAKEBASE_DATABASE). Token refresh is automatic.
 
 Tools:
-  READ:  list_tables, describe_table, read_query, list_schemas, get_connection_info
-  WRITE: insert_record, update_records, delete_records, batch_insert
-  SQL:   execute_sql, execute_transaction, explain_query
-  DDL:   create_table, drop_table, alter_table
-  PERF:  list_slow_queries
-  INFRA: list_projects, describe_project, get_connection_string, list_branches, list_endpoints, get_endpoint_status
-  BRANCH: create_branch, delete_branch
-  SCALE: configure_autoscaling, configure_scale_to_zero
-  QUALITY: profile_table
+  READ:      list_tables, describe_table, read_query, list_schemas, get_connection_info
+  WRITE:     insert_record, update_records, delete_records, batch_insert
+  SQL:       execute_sql, execute_transaction, explain_query
+  DDL:       create_table, drop_table, alter_table
+  PERF:      list_slow_queries
+  INFRA:     list_projects, describe_project, get_connection_string, list_branches, list_endpoints, get_endpoint_status
+  BRANCH:    create_branch, delete_branch
+  SCALE:     configure_autoscaling, configure_scale_to_zero
+  QUALITY:   profile_table
+  MIGRATION: prepare_database_migration, complete_database_migration
+  TUNING:    prepare_query_tuning, complete_query_tuning
+  EXPLORE:   describe_branch, compare_database_schema, search
 """
 
 import contextlib
@@ -48,6 +51,10 @@ from mcp.types import (
     TextContent,
     Tool,
 )
+try:
+    from mcp.types import ToolAnnotations
+except ImportError:
+    ToolAnnotations = None
 from pathlib import Path
 
 from starlette.applications import Starlette
@@ -62,8 +69,11 @@ logger = logging.getLogger("lakebase-mcp")
 # ── Globals ──────────────────────────────────────────────────────────
 
 _ws = None
+_ws_lock = threading.Lock()
 _pg_pool = None
 MAX_READ_ROWS = int(os.environ.get("MAX_ROWS", "1000"))
+MAX_MIGRATION_STATES = 100
+MAX_DATABASE_POOLS = 20
 
 # Connection mode: "provisioned" (app.yaml PGHOST) or "autoscaling" (LAKEBASE_PROJECT)
 _connection_mode = None        # set by _detect_connection_mode()
@@ -83,14 +93,19 @@ _request_database: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 _database_pools: dict[str, psycopg2.pool.ThreadedConnectionPool] = {}
 _database_pools_lock = threading.Lock()
 
+# Migration/tuning state for two-phase workflows (keyed by migration/tuning ID)
+_migration_state: dict[str, dict] = {}
+
 # ── Workspace client ─────────────────────────────────────────────────
 
 
 def _get_ws():
     global _ws
     if _ws is None:
-        _ws = WorkspaceClient()
-        logger.info("SDK initialized: host=%s auth=%s", _ws.config.host, _ws.config.auth_type)
+        with _ws_lock:
+            if _ws is None:
+                _ws = WorkspaceClient()
+                logger.info("SDK initialized: host=%s auth=%s", _ws.config.host, _ws.config.auth_type)
     return _ws
 
 
@@ -223,6 +238,11 @@ def _get_or_create_db_pool(database: str) -> psycopg2.pool.ThreadedConnectionPoo
     with _database_pools_lock:
         if database in _database_pools:
             return _database_pools[database]
+        if len(_database_pools) >= MAX_DATABASE_POOLS:
+            raise RuntimeError(
+                f"Maximum number of database pools ({MAX_DATABASE_POOLS}) reached. "
+                "Close unused database connections or increase MAX_DATABASE_POOLS."
+            )
 
     # Create new pool for this database
     if _connection_mode is None:
@@ -260,12 +280,37 @@ def _maybe_refresh_token():
     """Reinitialize pool if OAuth token is about to expire."""
     global _pg_pool
     if _token_timestamp and (time.time() - _token_timestamp) > _TOKEN_REFRESH_SECONDS:
-        logger.info("Token approaching expiry, refreshing pool...")
+        logger.info("Token approaching expiry, refreshing pools...")
+        # Save references to old pools before creating new ones
+        old_pg_pool = _pg_pool
+        old_db_pools = {}
+        with _database_pools_lock:
+            old_db_pools = dict(_database_pools)
+
+        # Create new default pool first (this sets _pg_pool)
         _init_pg_pool()
+
+        # Swap per-database pools atomically (clear so they get recreated with fresh tokens)
+        with _database_pools_lock:
+            _database_pools.clear()
+
+        # Now close the old pools after the swap
+        if old_pg_pool and old_pg_pool is not _pg_pool:
+            try:
+                old_pg_pool.closeall()
+            except Exception:
+                pass
+        for db_name, pool in old_db_pools.items():
+            try:
+                pool.closeall()
+            except Exception:
+                pass
+        logger.info("Per-database pools refreshed for token renewal")
 
 
 def _get_conn():
     """Get a connection — uses request-scoped database if set, else global pool."""
+    _maybe_refresh_token()  # ensure token is fresh for all pool types
     req_db = _request_database.get(None)
     if req_db:
         pool = _get_or_create_db_pool(req_db)
@@ -282,7 +327,6 @@ def _get_conn():
     global _pg_pool
     if _pg_pool is None:
         _init_pg_pool()
-    _maybe_refresh_token()
     try:
         return _pg_pool.getconn()
     except psycopg2.pool.PoolError:
@@ -398,8 +442,20 @@ _WRITE_KEYWORDS = {"INSERT", "UPDATE", "DELETE", "UPSERT", "MERGE"}
 
 def _classify_sql(sql):
     """Classify SQL as 'read', 'write', or 'ddl' by first keyword."""
-    stripped = sql.strip().rstrip(";").strip()
+    # Strip SQL comments before classification to prevent bypass
+    cleaned = re.sub(r'--[^\n]*', '', sql)
+    cleaned = re.sub(r'/\*.*?\*/', '', cleaned, flags=re.DOTALL)
+    stripped = cleaned.strip().rstrip(";").strip()
     first_word = stripped.split()[0].upper() if stripped else ""
+    # Handle WITH (CTE): scan past the CTE to find the actual DML/DDL keyword
+    if first_word == "WITH":
+        # Find the actual statement keyword after the CTE
+        cte_keywords = {"SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "ALTER", "DROP"}
+        words = stripped.upper().split()
+        for word in words[1:]:
+            if word in cte_keywords:
+                first_word = word
+                break
     if first_word in _DDL_KEYWORDS:
         return "ddl"
     if first_word in _WRITE_KEYWORDS:
@@ -409,19 +465,30 @@ def _classify_sql(sql):
 
 # ── Table name validation ────────────────────────────────────────────
 
-_valid_tables_cache = None
+_valid_tables_cache: dict = {}
+
+
+def _get_current_db_name() -> str:
+    """Get the current database name for cache keying."""
+    req_db = _request_database.get(None)
+    if req_db:
+        return req_db
+    return _current_database or os.environ.get("PGDATABASE", "") or os.environ.get("LAKEBASE_DATABASE", "default")
 
 
 def _get_valid_tables():
     """Fetch list of valid public table names from pg_tables."""
-    global _valid_tables_cache
-    if _valid_tables_cache is None:
-        rows = _execute_read(
-            "SELECT tablename FROM pg_tables WHERE schemaname = 'public'"
-        )
-        _valid_tables_cache = {r["tablename"] for r in rows}
-        logger.info("Valid tables: %s", _valid_tables_cache)
-    return _valid_tables_cache
+    db_name = _get_current_db_name()
+    entry = _valid_tables_cache.get(db_name)
+    if entry is not None:
+        return entry["tables"]
+    rows = _execute_read(
+        "SELECT tablename FROM pg_tables WHERE schemaname = 'public'"
+    )
+    tables = {r["tablename"] for r in rows}
+    _valid_tables_cache[db_name] = {"tables": tables, "time": time.time()}
+    logger.info("Valid tables for %s: %s", db_name, tables)
+    return tables
 
 
 def _validate_table(table_name):
@@ -436,8 +503,8 @@ def _validate_table(table_name):
 
 def _invalidate_table_cache():
     """Clear the table cache (e.g. after DDL)."""
-    global _valid_tables_cache
-    _valid_tables_cache = None
+    db_name = _get_current_db_name()
+    _valid_tables_cache.pop(db_name, None)
 
 
 # ── JSONB detection ──────────────────────────────────────────────────
@@ -484,6 +551,38 @@ def _ensure_list(val, param_name="value"):
             pass
         raise ValueError(f"{param_name} must be a JSON array, got string: {val[:100]}")
     raise ValueError(f"{param_name} must be a JSON array, got {type(val).__name__}")
+
+
+# ── SQL injection sanitization ────────────────────────────────────────
+
+
+def _sanitize_where(where: str) -> str:
+    """Reject WHERE clause values containing SQL injection patterns."""
+    if ";" in where:
+        raise ValueError("WHERE clause must not contain semicolons (;). Use parameterized queries for complex conditions.")
+    if "--" in where:
+        raise ValueError("WHERE clause must not contain line comments (--).")
+    if "/*" in where:
+        raise ValueError("WHERE clause must not contain block comments (/*).")
+    return where
+
+
+def _validate_column_type(ctype: str) -> str:
+    """Validate a column type string against a whitelist pattern."""
+    if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_\s\(\),\[\]]+$', ctype):
+        raise ValueError(f"Invalid column type: {ctype!r}. Only alphanumeric characters, spaces, parentheses, brackets, and commas are allowed.")
+    return ctype
+
+
+def _validate_constraints(constraints: str) -> str:
+    """Reject constraint strings containing SQL injection patterns."""
+    if ";" in constraints:
+        raise ValueError("Constraints must not contain semicolons (;).")
+    if "--" in constraints:
+        raise ValueError("Constraints must not contain line comments (--).")
+    if "/*" in constraints:
+        raise ValueError("Constraints must not contain block comments (/*).")
+    return constraints
 
 
 # ── SDK proto serialization ──────────────────────────────────────────
@@ -1067,12 +1166,217 @@ TOOLS = [
             "required": ["table_name"],
         },
     ),
+    # ── Neon-parity tools ──────────────────────────────────────────
+    Tool(
+        name="describe_branch",
+        description=(
+            "Get a tree view of all objects in a database: schemas, tables, views, "
+            "functions, sequences, and indexes. Works with any connected database."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "database": {
+                    "type": "string",
+                    "description": "Database name. Default: current database.",
+                },
+            },
+            "required": [],
+        },
+    ),
+    Tool(
+        name="compare_database_schema",
+        description=(
+            "Compare schemas between two databases and return a unified diff. "
+            "Shows tables/columns added, removed, or modified between source and target."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "source_database": {
+                    "type": "string",
+                    "description": "Source database name (baseline).",
+                },
+                "target_database": {
+                    "type": "string",
+                    "description": "Target database name (to compare against source).",
+                },
+            },
+            "required": ["source_database", "target_database"],
+        },
+    ),
+    Tool(
+        name="prepare_database_migration",
+        description=(
+            "Phase 1 of safe migration: validates migration SQL by running it in a "
+            "transaction that gets rolled back. Returns the execution plan and affected "
+            "objects without making changes. Use complete_database_migration to apply."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "migration_sql": {
+                    "type": "string",
+                    "description": "The SQL migration to validate (CREATE, ALTER, DROP, INSERT, etc.).",
+                },
+            },
+            "required": ["migration_sql"],
+        },
+    ),
+    Tool(
+        name="complete_database_migration",
+        description=(
+            "Phase 2 of safe migration: applies the validated migration SQL for real, "
+            "or discards it. Must be called after prepare_database_migration."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "migration_id": {
+                    "type": "string",
+                    "description": "Migration ID returned by prepare_database_migration.",
+                },
+                "apply_changes": {
+                    "type": "boolean",
+                    "description": "True to apply the migration, false to discard.",
+                    "default": True,
+                },
+            },
+            "required": ["migration_id"],
+        },
+    ),
+    Tool(
+        name="prepare_query_tuning",
+        description=(
+            "Phase 1 of query tuning: analyzes a query with EXPLAIN ANALYZE, identifies "
+            "bottlenecks, and suggests index/query improvements. Returns tuning suggestions."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "sql": {
+                    "type": "string",
+                    "description": "The SQL query to tune.",
+                },
+            },
+            "required": ["sql"],
+        },
+    ),
+    Tool(
+        name="complete_query_tuning",
+        description=(
+            "Phase 2 of query tuning: applies suggested DDL changes (e.g. CREATE INDEX) "
+            "or discards them. Must be called after prepare_query_tuning."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "tuning_id": {
+                    "type": "string",
+                    "description": "Tuning ID returned by prepare_query_tuning.",
+                },
+                "apply_changes": {
+                    "type": "boolean",
+                    "description": "True to apply suggested DDL, false to discard.",
+                    "default": False,
+                },
+                "ddl_statements": {
+                    "oneOf": [
+                        {"type": "array", "items": {"type": "string"}},
+                        {"type": "string", "description": "JSON-encoded array of DDL strings"},
+                    ],
+                    "description": "DDL statements to apply (e.g. CREATE INDEX). Defaults to suggestions from prepare step.",
+                },
+            },
+            "required": ["tuning_id"],
+        },
+    ),
+    Tool(
+        name="search",
+        description=(
+            "Search across all Lakebase instances, projects, and databases by keyword. "
+            "Returns matching instances, databases, and tables."
+        ),
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search query (min 2 characters). Matches instance names, database names, and table names.",
+                },
+            },
+            "required": ["query"],
+        },
+    ),
 ]
+
+
+# ── MCP Tool Annotations ─────────────────────────────────────────────
+_TOOL_ANNOTATIONS = {
+    # READ tools
+    "list_tables":              {"readOnlyHint": True,  "destructiveHint": False, "idempotentHint": True},
+    "describe_table":           {"readOnlyHint": True,  "destructiveHint": False, "idempotentHint": True},
+    "read_query":               {"readOnlyHint": True,  "destructiveHint": False, "idempotentHint": True},
+    "list_schemas":             {"readOnlyHint": True,  "destructiveHint": False, "idempotentHint": True},
+    "get_connection_info":      {"readOnlyHint": True,  "destructiveHint": False, "idempotentHint": True},
+    # WRITE tools
+    "insert_record":            {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False},
+    "update_records":           {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False},
+    "delete_records":           {"readOnlyHint": False, "destructiveHint": True,  "idempotentHint": False},
+    "batch_insert":             {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False},
+    # SQL tools
+    "execute_sql":              {"readOnlyHint": False, "destructiveHint": True,  "idempotentHint": False},
+    "execute_transaction":      {"readOnlyHint": False, "destructiveHint": True,  "idempotentHint": False},
+    "explain_query":            {"readOnlyHint": True,  "destructiveHint": False, "idempotentHint": True},
+    # DDL tools
+    "create_table":             {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True},
+    "drop_table":               {"readOnlyHint": False, "destructiveHint": True,  "idempotentHint": False},
+    "alter_table":              {"readOnlyHint": False, "destructiveHint": True,  "idempotentHint": False},
+    # PERF tools
+    "list_slow_queries":        {"readOnlyHint": True,  "destructiveHint": False, "idempotentHint": True},
+    # INFRA tools
+    "list_projects":            {"readOnlyHint": True,  "destructiveHint": False, "idempotentHint": True},
+    "describe_project":         {"readOnlyHint": True,  "destructiveHint": False, "idempotentHint": True},
+    "get_connection_string":    {"readOnlyHint": True,  "destructiveHint": False, "idempotentHint": True},
+    "list_branches":            {"readOnlyHint": True,  "destructiveHint": False, "idempotentHint": True},
+    "list_endpoints":           {"readOnlyHint": True,  "destructiveHint": False, "idempotentHint": True},
+    "get_endpoint_status":      {"readOnlyHint": True,  "destructiveHint": False, "idempotentHint": True},
+    # BRANCH tools
+    "create_branch":            {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False},
+    "delete_branch":            {"readOnlyHint": False, "destructiveHint": True,  "idempotentHint": False},
+    # SCALE tools
+    "configure_autoscaling":    {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True},
+    "configure_scale_to_zero":  {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True},
+    # QUALITY tools
+    "profile_table":            {"readOnlyHint": True,  "destructiveHint": False, "idempotentHint": True},
+    # Neon-parity tools
+    "describe_branch":          {"readOnlyHint": True,  "destructiveHint": False, "idempotentHint": True},
+    "compare_database_schema":  {"readOnlyHint": True,  "destructiveHint": False, "idempotentHint": True},
+    "prepare_database_migration": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False},
+    "complete_database_migration": {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False},
+    "prepare_query_tuning":     {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False},
+    "complete_query_tuning":    {"readOnlyHint": False, "destructiveHint": True,  "idempotentHint": False},
+    "search":                   {"readOnlyHint": True,  "destructiveHint": False, "idempotentHint": True},
+}
 
 
 @mcp_server.list_tools()
 async def handle_list_tools():
-    return TOOLS
+    if ToolAnnotations is None:
+        return TOOLS
+    annotated = []
+    for t in TOOLS:
+        ann = _TOOL_ANNOTATIONS.get(t.name)
+        if ann:
+            annotated.append(Tool(
+                name=t.name,
+                description=t.description,
+                inputSchema=t.inputSchema,
+                annotations=ToolAnnotations(**ann),
+            ))
+        else:
+            annotated.append(t)
+    return annotated
 
 
 @mcp_server.call_tool()
@@ -1172,6 +1476,29 @@ async def handle_call_tool(name: str, arguments: dict):
         # Data quality tools
         elif name == "profile_table":
             return _tool_profile_table(arguments["table_name"])
+        # Neon-parity tools
+        elif name == "describe_branch":
+            return _tool_describe_branch(arguments.get("database"))
+        elif name == "compare_database_schema":
+            return _tool_compare_database_schema(
+                arguments["source_database"], arguments["target_database"]
+            )
+        elif name == "prepare_database_migration":
+            return _tool_prepare_database_migration(arguments["migration_sql"])
+        elif name == "complete_database_migration":
+            return _tool_complete_database_migration(
+                arguments["migration_id"], arguments.get("apply_changes", True)
+            )
+        elif name == "prepare_query_tuning":
+            return _tool_prepare_query_tuning(arguments["sql"])
+        elif name == "complete_query_tuning":
+            return _tool_complete_query_tuning(
+                arguments["tuning_id"],
+                arguments.get("apply_changes", False),
+                arguments.get("ddl_statements"),
+            )
+        elif name == "search":
+            return _tool_search(arguments["query"])
         else:
             return [TextContent(type="text", text=f"Unknown tool: {name}")]
     except Exception as e:
@@ -1327,24 +1654,25 @@ async def handle_get_prompt(name: str, arguments: dict | None = None):
 
 def _tool_list_tables():
     rows = _execute_read("""
-        SELECT
-            t.tablename AS table_name,
-            (SELECT count(*) FROM information_schema.columns c
-             WHERE c.table_schema = 'public' AND c.table_name = t.tablename) AS column_count
-        FROM pg_tables t
-        WHERE t.schemaname = 'public'
-        ORDER BY t.tablename
+        SELECT t.table_name,
+               t.table_schema,
+               COALESCE(s.n_live_tup, 0) AS approx_row_count,
+               (SELECT count(*) FROM information_schema.columns c
+                WHERE c.table_name = t.table_name AND c.table_schema = t.table_schema) AS column_count
+        FROM information_schema.tables t
+        LEFT JOIN pg_stat_user_tables s ON s.relname = t.table_name AND s.schemaname = t.table_schema
+        WHERE t.table_schema = 'public' AND t.table_type = 'BASE TABLE'
+        ORDER BY t.table_name
     """)
-    # Get row counts per table
+    # Reshape to match expected output format
+    result = []
     for row in rows:
-        try:
-            count_rows = _execute_read(
-                f'SELECT count(*) AS cnt FROM "{row["table_name"]}"'
-            )
-            row["row_count"] = count_rows[0]["cnt"] if count_rows else 0
-        except Exception:
-            row["row_count"] = -1
-    return [TextContent(type="text", text=json.dumps(rows, indent=2))]
+        result.append({
+            "table_name": row["table_name"],
+            "row_count": row["approx_row_count"],
+            "column_count": row["column_count"],
+        })
+    return [TextContent(type="text", text=json.dumps(result, indent=2))]
 
 
 def _tool_describe_table(table_name):
@@ -1383,12 +1711,39 @@ def _tool_read_query(sql):
             type="text",
             text="Error: Only SELECT queries are allowed. Use insert_record, update_records, or delete_records for writes."
         )]
+    # Reject semicolons to prevent statement stacking
+    if ";" in stripped:
+        return [TextContent(
+            type="text",
+            text="Error: Multiple statements (semicolons) are not allowed in read_query. Use execute_sql for multi-statement queries."
+        )]
     # Enforce row limit
     upper = stripped.upper()
     if "LIMIT" not in upper:
         stripped = f"{stripped} LIMIT {MAX_READ_ROWS}"
-    rows = _execute_read(stripped)
-    return [TextContent(type="text", text=json.dumps(rows, indent=2, default=str))]
+    # Use SET TRANSACTION READ ONLY to enforce read-only mode
+    conn = _get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SET TRANSACTION READ ONLY")
+            cur.execute(stripped)
+            rows = _rows_to_dicts(cur)
+            conn.commit()
+        return [TextContent(type="text", text=json.dumps(rows, indent=2, default=str))]
+    except psycopg2.OperationalError:
+        _put_conn(conn, close=True)
+        conn = None
+        # Retry once on stale connection
+        conn = _get_conn()
+        with conn.cursor() as cur:
+            cur.execute("SET TRANSACTION READ ONLY")
+            cur.execute(stripped)
+            rows = _rows_to_dicts(cur)
+            conn.commit()
+        return [TextContent(type="text", text=json.dumps(rows, indent=2, default=str))]
+    finally:
+        if conn:
+            _put_conn(conn)
 
 
 def _tool_insert_record(table_name, record):
@@ -1424,6 +1779,7 @@ def _tool_update_records(table_name, set_values, where):
         return [TextContent(type="text", text="Error: set_values must contain at least one column.")]
     if not where or not where.strip():
         return [TextContent(type="text", text="Error: WHERE clause is required.")]
+    _sanitize_where(where)
 
     jsonb_cols = _get_jsonb_columns(table_name)
     set_parts = []
@@ -1448,6 +1804,7 @@ def _tool_delete_records(table_name, where):
     table_name = _validate_table(table_name)
     if not where or not where.strip():
         return [TextContent(type="text", text="Error: WHERE clause is required.")]
+    _sanitize_where(where)
 
     sql = f'DELETE FROM "{table_name}" WHERE {where} RETURNING *'
     rows = _execute_write(sql)
@@ -1609,7 +1966,10 @@ def _tool_create_table(table_name, columns, if_not_exists=True):
             return [TextContent(type="text", text=f"Error: Each column needs 'name' and 'type'. Got: {col}")]
         if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', name):
             return [TextContent(type="text", text=f"Error: Invalid column name: {name}")]
+        _validate_column_type(ctype)
         constraint = col.get("constraints", "")
+        if constraint:
+            _validate_constraints(constraint)
         col_defs.append(f'"{name}" {ctype} {constraint}'.strip())
 
     exists_clause = "IF NOT EXISTS " if if_not_exists else ""
@@ -1651,6 +2011,9 @@ def _tool_alter_table(table_name, operation, column_name, new_column_name=None, 
     if operation == "add_column":
         if not column_type:
             return [TextContent(type="text", text="Error: column_type is required for add_column.")]
+        _validate_column_type(column_type)
+        if constraints:
+            _validate_constraints(constraints)
         constraint_str = f" {constraints}" if constraints else ""
         ddl = f'ALTER TABLE "{table_name}" ADD COLUMN "{column_name}" {column_type}{constraint_str}'
     elif operation == "drop_column":
@@ -1664,6 +2027,7 @@ def _tool_alter_table(table_name, operation, column_name, new_column_name=None, 
     elif operation == "alter_type":
         if not column_type:
             return [TextContent(type="text", text="Error: column_type is required for alter_type.")]
+        _validate_column_type(column_type)
         ddl = f'ALTER TABLE "{table_name}" ALTER COLUMN "{column_name}" TYPE {column_type}'
     else:
         return [TextContent(type="text", text=f"Error: Unknown operation: {operation}. Use add_column, drop_column, rename_column, or alter_type.")]
@@ -1861,18 +2225,17 @@ def _tool_describe_project(project: str):
     # Try autoscaling project
     try:
         project_path = _resolve_project(project)
-        proj = w.postgres.get_project(project_id=project_path)
-        result = _serialize_proto(proj)
+        result = w.api_client.do("GET", f"/api/2.0/postgres/{project_path}")
         if isinstance(result, dict):
             result["instance_type"] = "autoscaling"
         # Also list branches
         try:
-            branches = list(w.postgres.list_branches(parent=project_path))
-            result["branches"] = [_serialize_proto(b) for b in branches]
+            br_resp = w.api_client.do("GET", f"/api/2.0/postgres/{project_path}/branches")
+            result["branches"] = br_resp.get("branches", [])
         except Exception:
             result["branches"] = []
         return [TextContent(type="text", text=json.dumps(result, indent=2, default=str))]
-    except (AttributeError, Exception) as e:
+    except Exception as e:
         return [TextContent(type="text", text=json.dumps({"error": str(e)}, indent=2))]
 
 
@@ -1880,12 +2243,14 @@ def _tool_get_connection_string(endpoint: str, fmt: str = "psql"):
     """Build a connection string for an endpoint."""
     try:
         w = _get_ws()
-        ep = w.postgres.get_endpoint(name=endpoint)
-        if not ep.status or not ep.status.hosts or not ep.status.hosts.host:
+        ep = w.api_client.do("GET", f"/api/2.0/postgres/{endpoint}")
+        ep_status = ep.get("status", {})
+        ep_hosts = ep_status.get("hosts", {}) if isinstance(ep_status, dict) else {}
+        host = ep_hosts.get("host", "") if isinstance(ep_hosts, dict) else ""
+        if not host:
             return [TextContent(type="text", text=json.dumps({
-                "error": f"Endpoint {endpoint} has no host. State: {getattr(ep, 'state', 'unknown')}",
+                "error": f"Endpoint {endpoint} has no host. State: {ep.get('state', 'unknown')}",
             }, indent=2))]
-        host = ep.status.hosts.host
         port = 5432
         user = "<your-username>"
         db = "databricks_postgres"
@@ -1904,10 +2269,6 @@ def _tool_get_connection_string(endpoint: str, fmt: str = "psql"):
             "port": port,
             "endpoint": endpoint,
         }, indent=2))]
-    except AttributeError:
-        return [TextContent(type="text", text=json.dumps({
-            "error": "w.postgres.get_endpoint() not available.",
-        }, indent=2))]
     except Exception as e:
         return [TextContent(type="text", text=json.dumps({"error": str(e)}, indent=2))]
 
@@ -1917,13 +2278,9 @@ def _tool_list_branches(project: str):
     try:
         w = _get_ws()
         project_path = _resolve_project(project)
-        branches = list(w.postgres.list_branches(parent=project_path))
-        result = [_serialize_proto(b) for b in branches]
-        return [TextContent(type="text", text=json.dumps(result, indent=2, default=str))]
-    except AttributeError:
-        return [TextContent(type="text", text=json.dumps({
-            "error": "w.postgres.list_branches() not available.",
-        }, indent=2))]
+        resp = w.api_client.do("GET", f"/api/2.0/postgres/{project_path}/branches")
+        branches = resp.get("branches", [])
+        return [TextContent(type="text", text=json.dumps(branches, indent=2, default=str))]
     except Exception as e:
         return [TextContent(type="text", text=json.dumps({"error": str(e)}, indent=2))]
 
@@ -1933,13 +2290,9 @@ def _tool_list_endpoints(project: str, branch: str = "production"):
     try:
         w = _get_ws()
         branch_path = _resolve_branch(project, branch)
-        endpoints = list(w.postgres.list_endpoints(parent=branch_path))
-        result = [_serialize_proto(ep) for ep in endpoints]
-        return [TextContent(type="text", text=json.dumps(result, indent=2, default=str))]
-    except AttributeError:
-        return [TextContent(type="text", text=json.dumps({
-            "error": "w.postgres.list_endpoints() not available.",
-        }, indent=2))]
+        resp = w.api_client.do("GET", f"/api/2.0/postgres/{branch_path}/endpoints")
+        endpoints = resp.get("endpoints", [])
+        return [TextContent(type="text", text=json.dumps(endpoints, indent=2, default=str))]
     except Exception as e:
         return [TextContent(type="text", text=json.dumps({"error": str(e)}, indent=2))]
 
@@ -1948,13 +2301,8 @@ def _tool_get_endpoint_status(endpoint: str):
     """Get endpoint state, host, compute config."""
     try:
         w = _get_ws()
-        ep = w.postgres.get_endpoint(name=endpoint)
-        result = _serialize_proto(ep)
-        return [TextContent(type="text", text=json.dumps(result, indent=2, default=str))]
-    except AttributeError:
-        return [TextContent(type="text", text=json.dumps({
-            "error": "w.postgres.get_endpoint() not available.",
-        }, indent=2))]
+        resp = w.api_client.do("GET", f"/api/2.0/postgres/{endpoint}")
+        return [TextContent(type="text", text=json.dumps(resp, indent=2, default=str))]
     except Exception as e:
         return [TextContent(type="text", text=json.dumps({"error": str(e)}, indent=2))]
 
@@ -1966,23 +2314,13 @@ def _tool_create_branch(project: str, branch_id: str, parent_branch: str = "prod
     """Create a new branch."""
     try:
         w = _get_ws()
+        project_path = _resolve_project(project)
         parent_path = _resolve_branch(project, parent_branch)
-        from databricks.sdk.service.database import Branch
-        branch = w.postgres.create_branch(
-            parent=_resolve_project(project),
-            branch=Branch(parent_branch=parent_path),
-            branch_id=branch_id,
-        )
-        result = _serialize_proto(branch)
-        return [TextContent(type="text", text=json.dumps(result, indent=2, default=str))]
-    except ImportError:
-        return [TextContent(type="text", text=json.dumps({
-            "error": "Branch class not available in this SDK version.",
-        }, indent=2))]
-    except AttributeError:
-        return [TextContent(type="text", text=json.dumps({
-            "error": "w.postgres.create_branch() not available.",
-        }, indent=2))]
+        resp = w.api_client.do("POST", f"/api/2.0/postgres/{project_path}/branches", body={
+            "branch": {"parent_branch": parent_path},
+            "branch_id": branch_id,
+        })
+        return [TextContent(type="text", text=json.dumps(resp, indent=2, default=str))]
     except Exception as e:
         return [TextContent(type="text", text=json.dumps({"error": str(e)}, indent=2))]
 
@@ -1995,14 +2333,10 @@ def _tool_delete_branch(branch: str, confirm: bool = False):
         return [TextContent(type="text", text="Error: Cannot delete the production branch.")]
     try:
         w = _get_ws()
-        w.postgres.delete_branch(name=branch)
+        w.api_client.do("DELETE", f"/api/2.0/postgres/{branch}")
         return [TextContent(type="text", text=json.dumps({
             "deleted": True,
             "branch": branch,
-        }, indent=2))]
-    except AttributeError:
-        return [TextContent(type="text", text=json.dumps({
-            "error": "w.postgres.delete_branch() not available.",
         }, indent=2))]
     except Exception as e:
         return [TextContent(type="text", text=json.dumps({"error": str(e)}, indent=2))]
@@ -2015,25 +2349,14 @@ def _tool_configure_autoscaling(endpoint: str, min_cu: float, max_cu: float):
     """Configure autoscaling min/max CU."""
     try:
         w = _get_ws()
-        from databricks.sdk.service.database import Endpoint, EndpointAutoscaling
-        updated = w.postgres.update_endpoint(
-            endpoint=Endpoint(
-                name=endpoint,
-                autoscaling=EndpointAutoscaling(min_cu=min_cu, max_cu=max_cu),
-            ),
-            update_mask="autoscaling.min_cu,autoscaling.max_cu",
-        )
-        result = _serialize_proto(updated)
-        return [TextContent(type="text", text=json.dumps(result, indent=2, default=str))]
-    except ImportError:
-        return [TextContent(type="text", text=json.dumps({
-            "error": "Endpoint/EndpointAutoscaling classes not available in this SDK version.",
-            "hint": "Autoscaling configuration requires the latest Databricks SDK with Lakebase autoscaling support.",
-        }, indent=2))]
-    except AttributeError:
-        return [TextContent(type="text", text=json.dumps({
-            "error": "w.postgres.update_endpoint() not available. This feature requires autoscaling Lakebase.",
-        }, indent=2))]
+        resp = w.api_client.do("PATCH", f"/api/2.0/postgres/{endpoint}", body={
+            "endpoint": {
+                "name": endpoint,
+                "autoscaling": {"min_cu": min_cu, "max_cu": max_cu},
+            },
+            "update_mask": "autoscaling.min_cu,autoscaling.max_cu",
+        })
+        return [TextContent(type="text", text=json.dumps(resp, indent=2, default=str))]
     except Exception as e:
         return [TextContent(type="text", text=json.dumps({"error": str(e)}, indent=2))]
 
@@ -2042,26 +2365,19 @@ def _tool_configure_scale_to_zero(endpoint: str, enabled: bool, idle_timeout_sec
     """Enable/disable scale-to-zero with idle timeout."""
     try:
         w = _get_ws()
-        from databricks.sdk.service.database import Endpoint, EndpointAutoscaling, ScaleToZero
-        scale_config = ScaleToZero(enabled=enabled, idle_timeout_seconds=idle_timeout_seconds)
-        updated = w.postgres.update_endpoint(
-            endpoint=Endpoint(
-                name=endpoint,
-                autoscaling=EndpointAutoscaling(scale_to_zero=scale_config),
-            ),
-            update_mask="autoscaling.scale_to_zero",
-        )
-        result = _serialize_proto(updated)
-        return [TextContent(type="text", text=json.dumps(result, indent=2, default=str))]
-    except ImportError:
-        return [TextContent(type="text", text=json.dumps({
-            "error": "ScaleToZero class not available in this SDK version.",
-            "hint": "Scale-to-zero configuration requires the latest Databricks SDK.",
-        }, indent=2))]
-    except AttributeError:
-        return [TextContent(type="text", text=json.dumps({
-            "error": "w.postgres.update_endpoint() not available.",
-        }, indent=2))]
+        resp = w.api_client.do("PATCH", f"/api/2.0/postgres/{endpoint}", body={
+            "endpoint": {
+                "name": endpoint,
+                "autoscaling": {
+                    "scale_to_zero": {
+                        "enabled": enabled,
+                        "idle_timeout_seconds": idle_timeout_seconds,
+                    },
+                },
+            },
+            "update_mask": "autoscaling.scale_to_zero",
+        })
+        return [TextContent(type="text", text=json.dumps(resp, indent=2, default=str))]
     except Exception as e:
         return [TextContent(type="text", text=json.dumps({"error": str(e)}, indent=2))]
 
@@ -2134,6 +2450,617 @@ def _tool_profile_table(table_name: str):
         "table": table_name,
         "total_rows": total_rows,
         "columns": profile,
+    }, indent=2, default=str))]
+
+
+# ── Tool implementations (Neon-parity) ───────────────────────────────
+
+
+def _get_schema_snapshot(database: str | None = None):
+    """Get a full schema snapshot for a database. Uses request-scoped pool if database specified."""
+    token = None
+    if database:
+        token = _request_database.set(database)
+    try:
+        schemas = _execute_read(
+            "SELECT schema_name FROM information_schema.schemata "
+            "WHERE schema_name NOT IN ('pg_catalog', 'information_schema', 'pg_toast') "
+            "ORDER BY schema_name"
+        )
+        result = {}
+        for s in schemas:
+            sn = s["schema_name"]
+            tables = _execute_read(
+                "SELECT table_name, table_type FROM information_schema.tables "
+                "WHERE table_schema = %s ORDER BY table_name", (sn,)
+            )
+            columns_by_table = {}
+            for t in tables:
+                cols = _execute_read(
+                    "SELECT column_name, data_type, is_nullable, column_default "
+                    "FROM information_schema.columns "
+                    "WHERE table_schema = %s AND table_name = %s "
+                    "ORDER BY ordinal_position", (sn, t["table_name"])
+                )
+                columns_by_table[t["table_name"]] = {
+                    "type": t["table_type"],
+                    "columns": cols,
+                }
+            result[sn] = columns_by_table
+        return result
+    finally:
+        if token is not None:
+            _request_database.reset(token)
+
+
+def _tool_describe_branch(database: str | None = None):
+    """Tree view of all objects in a database."""
+    try:
+        if database and not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', database):
+            return [TextContent(type="text", text=f"Error: Invalid database name: {database}")]
+        db_name = database or _current_database or os.environ.get("PGDATABASE", "") or os.environ.get("LAKEBASE_DATABASE", "")
+        token = None
+        if database:
+            token = _request_database.set(database)
+        try:
+            tree = {"database": db_name, "schemas": {}}
+            schemas = _execute_read(
+                "SELECT schema_name FROM information_schema.schemata "
+                "WHERE schema_name NOT IN ('pg_catalog', 'information_schema', 'pg_toast') "
+                "ORDER BY schema_name"
+            )
+            for s in schemas:
+                sn = s["schema_name"]
+                schema_obj = {"tables": [], "views": [], "functions": [], "sequences": [], "indexes": []}
+                # Tables and views
+                tables = _execute_read(
+                    "SELECT table_name, table_type FROM information_schema.tables "
+                    "WHERE table_schema = %s ORDER BY table_name", (sn,)
+                )
+                for t in tables:
+                    cols = _execute_read(
+                        "SELECT column_name, data_type, is_nullable "
+                        "FROM information_schema.columns "
+                        "WHERE table_schema = %s AND table_name = %s "
+                        "ORDER BY ordinal_position", (sn, t["table_name"])
+                    )
+                    entry = {"name": t["table_name"], "columns": cols}
+                    if t["table_type"] == "VIEW":
+                        schema_obj["views"].append(entry)
+                    else:
+                        schema_obj["tables"].append(entry)
+                # Functions
+                funcs = _execute_read(
+                    "SELECT routine_name, routine_type, data_type AS return_type "
+                    "FROM information_schema.routines "
+                    "WHERE routine_schema = %s ORDER BY routine_name", (sn,)
+                )
+                schema_obj["functions"] = funcs
+                # Sequences
+                seqs = _execute_read(
+                    "SELECT sequence_name FROM information_schema.sequences "
+                    "WHERE sequence_schema = %s ORDER BY sequence_name", (sn,)
+                )
+                schema_obj["sequences"] = [s["sequence_name"] for s in seqs]
+                # Indexes
+                idxs = _execute_read(
+                    "SELECT indexname, tablename, indexdef FROM pg_indexes "
+                    "WHERE schemaname = %s ORDER BY indexname", (sn,)
+                )
+                schema_obj["indexes"] = idxs
+                tree["schemas"][sn] = schema_obj
+            return [TextContent(type="text", text=json.dumps(tree, indent=2, default=str))]
+        finally:
+            if token is not None:
+                _request_database.reset(token)
+    except Exception as e:
+        return [TextContent(type="text", text=json.dumps({"error": str(e)}, indent=2))]
+
+
+def _tool_compare_database_schema(source_database: str, target_database: str):
+    """Compare schemas between two databases, return unified diff."""
+    for db in (source_database, target_database):
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', db):
+            return [TextContent(type="text", text=f"Error: Invalid database name: {db}")]
+    try:
+        source_schema = _get_schema_snapshot(source_database)
+        target_schema = _get_schema_snapshot(target_database)
+
+        diffs = []
+        all_schemas = sorted(set(list(source_schema.keys()) + list(target_schema.keys())))
+
+        for schema_name in all_schemas:
+            src_tables = source_schema.get(schema_name, {})
+            tgt_tables = target_schema.get(schema_name, {})
+            all_tables = sorted(set(list(src_tables.keys()) + list(tgt_tables.keys())))
+
+            for table_name in all_tables:
+                src = src_tables.get(table_name)
+                tgt = tgt_tables.get(table_name)
+
+                if src and not tgt:
+                    diffs.append({
+                        "schema": schema_name,
+                        "table": table_name,
+                        "change": "dropped",
+                        "detail": f"Table {schema_name}.{table_name} exists in {source_database} but not in {target_database}",
+                    })
+                elif tgt and not src:
+                    diffs.append({
+                        "schema": schema_name,
+                        "table": table_name,
+                        "change": "added",
+                        "detail": f"Table {schema_name}.{table_name} exists in {target_database} but not in {source_database}",
+                        "columns": tgt.get("columns", []),
+                    })
+                else:
+                    # Compare columns
+                    src_cols = {c["column_name"]: c for c in (src or {}).get("columns", [])}
+                    tgt_cols = {c["column_name"]: c for c in (tgt or {}).get("columns", [])}
+                    col_diffs = []
+                    for cn in sorted(set(list(src_cols.keys()) + list(tgt_cols.keys()))):
+                        sc = src_cols.get(cn)
+                        tc = tgt_cols.get(cn)
+                        if sc and not tc:
+                            col_diffs.append({"column": cn, "change": "dropped"})
+                        elif tc and not sc:
+                            col_diffs.append({"column": cn, "change": "added", "type": tc.get("data_type")})
+                        elif sc and tc:
+                            changes = {}
+                            if sc.get("data_type") != tc.get("data_type"):
+                                changes["type"] = {"from": sc.get("data_type"), "to": tc.get("data_type")}
+                            if sc.get("is_nullable") != tc.get("is_nullable"):
+                                changes["nullable"] = {"from": sc.get("is_nullable"), "to": tc.get("is_nullable")}
+                            if changes:
+                                col_diffs.append({"column": cn, "change": "modified", **changes})
+                    if col_diffs:
+                        diffs.append({
+                            "schema": schema_name,
+                            "table": table_name,
+                            "change": "modified",
+                            "column_diffs": col_diffs,
+                        })
+
+        return [TextContent(type="text", text=json.dumps({
+            "source": source_database,
+            "target": target_database,
+            "diff_count": len(diffs),
+            "diffs": diffs,
+        }, indent=2, default=str))]
+    except Exception as e:
+        return [TextContent(type="text", text=json.dumps({"error": str(e)}, indent=2))]
+
+
+def _split_sql_statements(sql: str) -> list[str]:
+    """Split SQL on semicolons, respecting single-quoted and dollar-quoted strings."""
+    stmts = []
+    current = []
+    in_single_quote = False
+    in_dollar_quote = False
+    dollar_tag = ""
+    i = 0
+    while i < len(sql):
+        ch = sql[i]
+        if in_single_quote:
+            current.append(ch)
+            if ch == "'" and (i + 1 >= len(sql) or sql[i + 1] != "'"):
+                in_single_quote = False
+            elif ch == "'" and i + 1 < len(sql) and sql[i + 1] == "'":
+                current.append(sql[i + 1])
+                i += 1  # skip escaped quote
+        elif in_dollar_quote:
+            current.append(ch)
+            if ch == "$" and sql[i:i + len(dollar_tag)] == dollar_tag:
+                current.extend(list(dollar_tag[1:]))
+                i += len(dollar_tag) - 1
+                in_dollar_quote = False
+        elif ch == "'":
+            in_single_quote = True
+            current.append(ch)
+        elif ch == "$" and not in_single_quote:
+            # Check for dollar-quoting like $$ or $tag$
+            end = sql.find("$", i + 1)
+            if end != -1:
+                tag = sql[i:end + 1]
+                if re.match(r'^\$[a-zA-Z0-9_]*\$$', tag):
+                    dollar_tag = tag
+                    in_dollar_quote = True
+                    current.extend(list(tag))
+                    i = end
+                else:
+                    current.append(ch)
+            else:
+                current.append(ch)
+        elif ch == ";":
+            stmt = "".join(current).strip()
+            if stmt:
+                stmts.append(stmt)
+            current = []
+        else:
+            current.append(ch)
+        i += 1
+    last = "".join(current).strip()
+    if last:
+        stmts.append(last)
+    return stmts
+
+
+def _tool_prepare_database_migration(migration_sql: str):
+    """Phase 1: validate migration by dry-running in a rolled-back transaction."""
+    # Clean up stale entries older than 1 hour
+    now = time.time()
+    stale = [k for k, v in _migration_state.items() if now - v.get("created_at", 0) > 3600]
+    for k in stale:
+        _migration_state.pop(k, None)
+
+    # Enforce maximum migration state entries
+    if len(_migration_state) >= MAX_MIGRATION_STATES:
+        raise RuntimeError(
+            f"Maximum number of pending migrations/tuning sessions ({MAX_MIGRATION_STATES}) reached. "
+            "Complete or discard existing migrations before creating new ones."
+        )
+
+    migration_id = str(uuid.uuid4())[:8]
+    stripped = migration_sql.strip()
+    if not stripped:
+        return [TextContent(type="text", text="Error: Empty migration SQL.")]
+
+    conn = _get_conn()
+    try:
+        with conn.cursor() as cur:
+            # Capture pre-migration state
+            cur.execute("SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename")
+            pre_tables = {r[0] for r in cur.fetchall()}
+
+            # Run migration in transaction (split respecting string literals)
+            statements = _split_sql_statements(stripped)
+            results = []
+            for i, stmt in enumerate(statements):
+                try:
+                    cur.execute(stmt)
+                    results.append({
+                        "index": i,
+                        "sql": stmt[:200],
+                        "status": cur.statusmessage,
+                        "rowcount": cur.rowcount,
+                    })
+                except Exception as e:
+                    conn.rollback()
+                    return [TextContent(type="text", text=json.dumps({
+                        "migration_id": migration_id,
+                        "status": "validation_failed",
+                        "failed_at": i,
+                        "error": str(e),
+                        "sql": stmt[:200],
+                        "results": results,
+                    }, indent=2, default=str))]
+
+            # Capture post-migration state
+            cur.execute("SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename")
+            post_tables = {r[0] for r in cur.fetchall()}
+
+            added_tables = sorted(post_tables - pre_tables)
+            dropped_tables = sorted(pre_tables - post_tables)
+
+            # Rollback — no actual changes
+            conn.rollback()
+
+        # Store state for complete step
+        _migration_state[migration_id] = {
+            "migration_sql": stripped,
+            "statements": statements,
+            "created_at": time.time(),
+        }
+
+        return [TextContent(type="text", text=json.dumps({
+            "migration_id": migration_id,
+            "status": "validated",
+            "statement_count": len(statements),
+            "results": results,
+            "tables_added": added_tables,
+            "tables_dropped": dropped_tables,
+            "hint": f"Call complete_database_migration(migration_id='{migration_id}', apply_changes=true) to apply.",
+        }, indent=2, default=str))]
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        raise
+    finally:
+        if conn:
+            _put_conn(conn)
+
+
+def _tool_complete_database_migration(migration_id: str, apply_changes: bool = True):
+    """Phase 2: apply or discard a validated migration."""
+    state = _migration_state.pop(migration_id, None)
+    if not state:
+        return [TextContent(type="text", text=json.dumps({
+            "error": f"Migration '{migration_id}' not found. It may have expired or already been completed.",
+            "hint": "Run prepare_database_migration again to create a new migration.",
+        }, indent=2))]
+
+    if not apply_changes:
+        return [TextContent(type="text", text=json.dumps({
+            "migration_id": migration_id,
+            "status": "discarded",
+            "message": "Migration discarded. No changes were made.",
+        }, indent=2))]
+
+    # Apply for real
+    statements = state["statements"]
+    conn = _get_conn()
+    results = []
+    try:
+        with conn.cursor() as cur:
+            for i, stmt in enumerate(statements):
+                try:
+                    cur.execute(stmt)
+                    results.append({
+                        "index": i,
+                        "sql": stmt[:200],
+                        "status": cur.statusmessage,
+                        "rowcount": cur.rowcount,
+                    })
+                except Exception as e:
+                    conn.rollback()
+                    return [TextContent(type="text", text=json.dumps({
+                        "migration_id": migration_id,
+                        "status": "failed",
+                        "failed_at": i,
+                        "error": str(e),
+                        "results": results,
+                    }, indent=2, default=str))]
+            conn.commit()
+        _invalidate_table_cache()
+        return [TextContent(type="text", text=json.dumps({
+            "migration_id": migration_id,
+            "status": "applied",
+            "statement_count": len(results),
+            "results": results,
+        }, indent=2, default=str))]
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        raise
+    finally:
+        if conn:
+            _put_conn(conn)
+
+
+def _tool_prepare_query_tuning(sql: str):
+    """Phase 1: analyze query and suggest optimizations."""
+    stripped = sql.strip().rstrip(";").strip()
+    if not stripped:
+        return [TextContent(type="text", text="Error: Empty SQL statement.")]
+
+    # Clean up stale entries older than 1 hour
+    now = time.time()
+    stale = [k for k, v in _migration_state.items() if now - v.get("created_at", 0) > 3600]
+    for k in stale:
+        _migration_state.pop(k, None)
+
+    # Enforce maximum migration state entries
+    if len(_migration_state) >= MAX_MIGRATION_STATES:
+        raise RuntimeError(
+            f"Maximum number of pending migrations/tuning sessions ({MAX_MIGRATION_STATES}) reached. "
+            "Complete or discard existing sessions before creating new ones."
+        )
+
+    tuning_id = str(uuid.uuid4())[:8]
+    conn = _get_conn()
+    try:
+        with conn.cursor() as cur:
+            # Get execution plan
+            cur.execute(f"EXPLAIN (ANALYZE, FORMAT JSON) {stripped}")
+            plan_rows = _rows_to_dicts(cur)
+            conn.rollback()  # rollback in case of writes
+
+            plan = plan_rows[0] if plan_rows else {}
+            plan_json = plan.get("QUERY PLAN", plan)
+
+            # Analyze for sequential scans and suggest indexes
+            suggestions = []
+
+            # Detect seq scans on large tables
+            cur.execute(f"EXPLAIN (FORMAT JSON) {stripped}")
+            explain_rows = _rows_to_dicts(cur)
+            explain_json = json.dumps(explain_rows)
+
+            if "Seq Scan" in explain_json:
+                # Find tables with seq scans
+                cur.execute(f"EXPLAIN (FORMAT TEXT) {stripped}")
+                text_plan = cur.fetchall()
+                for row in text_plan:
+                    line = row[0] if row else ""
+                    if "Seq Scan on" in line:
+                        table_match = re.search(r'Seq Scan on (\w+)', line)
+                        if table_match:
+                            table = table_match.group(1)
+                            suggestions.append({
+                                "type": "index",
+                                "reason": f"Sequential scan detected on table '{table}'",
+                                "suggestion": f"Consider adding an index on '{table}' for the columns used in WHERE/JOIN clauses",
+                            })
+
+            # Check for missing indexes on WHERE columns
+            upper_sql = stripped.upper()
+            if "WHERE" in upper_sql:
+                suggestions.append({
+                    "type": "general",
+                    "suggestion": "Review WHERE clause columns — adding indexes on frequently filtered columns can improve performance",
+                })
+
+            # Store for complete step
+            _migration_state[tuning_id] = {
+                "type": "tuning",
+                "sql": stripped,
+                "suggestions": suggestions,
+                "created_at": time.time(),
+            }
+
+            return [TextContent(type="text", text=json.dumps({
+                "tuning_id": tuning_id,
+                "sql": stripped[:500],
+                "plan": plan_json,
+                "suggestions": suggestions,
+                "hint": f"Call complete_query_tuning(tuning_id='{tuning_id}', apply_changes=true, ddl_statements=[...]) to apply.",
+            }, indent=2, default=str))]
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        raise
+    finally:
+        if conn:
+            _put_conn(conn)
+
+
+def _tool_complete_query_tuning(tuning_id: str, apply_changes: bool = False, ddl_statements=None):
+    """Phase 2: apply or discard query tuning suggestions."""
+    state = _migration_state.pop(tuning_id, None)
+    if not state:
+        return [TextContent(type="text", text=json.dumps({
+            "error": f"Tuning session '{tuning_id}' not found.",
+            "hint": "Run prepare_query_tuning again.",
+        }, indent=2))]
+
+    if not apply_changes:
+        return [TextContent(type="text", text=json.dumps({
+            "tuning_id": tuning_id,
+            "status": "discarded",
+        }, indent=2))]
+
+    # Apply DDL statements
+    if ddl_statements is None:
+        return [TextContent(type="text", text=json.dumps({
+            "error": "ddl_statements required when apply_changes=true",
+            "hint": "Provide CREATE INDEX or other DDL statements to apply.",
+        }, indent=2))]
+
+    ddl_statements = _ensure_list(ddl_statements, "ddl_statements")
+    conn = _get_conn()
+    results = []
+    try:
+        with conn.cursor() as cur:
+            for i, ddl in enumerate(ddl_statements):
+                ddl = ddl.strip().rstrip(";").strip()
+                if not ddl:
+                    continue
+                try:
+                    cur.execute(ddl)
+                    results.append({"index": i, "sql": ddl[:200], "status": cur.statusmessage})
+                except Exception as e:
+                    conn.rollback()
+                    return [TextContent(type="text", text=json.dumps({
+                        "tuning_id": tuning_id,
+                        "status": "failed",
+                        "failed_at": i,
+                        "error": str(e),
+                        "results": results,
+                    }, indent=2, default=str))]
+            conn.commit()
+
+        # Re-run EXPLAIN to show improvement (only safe for read queries)
+        new_plan = {}
+        if _classify_sql(state['sql']) == 'read':
+            conn2 = _get_conn()
+            try:
+                with conn2.cursor() as cur2:
+                    cur2.execute(f"EXPLAIN (ANALYZE, FORMAT JSON) {state['sql']}")
+                    plan_rows = _rows_to_dicts(cur2)
+                    new_plan = plan_rows[0] if plan_rows else {}
+                    conn2.rollback()
+            finally:
+                _put_conn(conn2)
+
+        return [TextContent(type="text", text=json.dumps({
+            "tuning_id": tuning_id,
+            "status": "applied",
+            "ddl_applied": len(results),
+            "results": results,
+            "new_plan": new_plan,
+        }, indent=2, default=str))]
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        raise
+    finally:
+        if conn:
+            _put_conn(conn)
+
+
+def _tool_search(query: str):
+    """Search across instances, databases, and tables."""
+    if len(query) < 2:
+        return [TextContent(type="text", text="Error: Search query must be at least 2 characters.")]
+
+    query_lower = query.lower()
+    results = {"instances": [], "databases": [], "tables": []}
+
+    # Search instances/projects
+    try:
+        w = _get_ws()
+        # Provisioned instances
+        try:
+            resp = w.api_client.do("GET", "/api/2.0/database/instances")
+            for inst in resp.get("database_instances", []):
+                name = inst.get("name", "")
+                if query_lower in name.lower():
+                    results["instances"].append({
+                        "name": name,
+                        "type": "provisioned",
+                        "state": inst.get("state", ""),
+                        "host": inst.get("read_write_dns", ""),
+                    })
+        except Exception:
+            pass
+        # Autoscaling projects
+        try:
+            resp = w.api_client.do("GET", "/api/2.0/postgres/projects")
+            for p in resp.get("projects", []):
+                name = p.get("display_name", p.get("name", ""))
+                if query_lower in name.lower():
+                    results["instances"].append({
+                        "name": name,
+                        "type": "autoscaling",
+                        "state": p.get("state", ""),
+                    })
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+    # Search databases on current instance
+    try:
+        dbs = _execute_read(
+            "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname"
+        )
+        for db in dbs:
+            if query_lower in db["datname"].lower():
+                results["databases"].append(db["datname"])
+    except Exception:
+        pass
+
+    # Search tables in current database
+    try:
+        tables = _execute_read(
+            "SELECT tablename, schemaname FROM pg_tables "
+            "WHERE schemaname NOT IN ('pg_catalog', 'information_schema') "
+            "ORDER BY tablename"
+        )
+        for t in tables:
+            if query_lower in t["tablename"].lower():
+                results["tables"].append({
+                    "table": t["tablename"],
+                    "schema": t["schemaname"],
+                })
+    except Exception:
+        pass
+
+    total = len(results["instances"]) + len(results["databases"]) + len(results["tables"])
+    return [TextContent(type="text", text=json.dumps({
+        "query": query,
+        "total_matches": total,
+        **results,
     }, indent=2, default=str))]
 
 
@@ -2371,7 +3298,7 @@ async def api_switch_database(request: Request):
 
 
 async def api_switch_instance(request: Request):
-    """Switch to a different Lakebase instance. Reconnects the pool to the new instance's host."""
+    """Switch to a different Lakebase instance (provisioned or autoscaling)."""
     global _current_instance, _current_instance_host, _current_database, _pg_pool, _token_timestamp
     body = await request.json()
     instance_name = body.get("instance", "").strip()
@@ -2386,45 +3313,105 @@ async def api_switch_instance(request: Request):
     old_db = _current_database
     try:
         w = _get_ws()
+        new_host = None
+        pg_pass = None
+        pg_user = None
+        instance_type = "provisioned"
 
-        # Look up instance host via REST API
-        resp = w.api_client.do("GET", f"/api/2.0/database/instances/{instance_name}")
-        new_host = resp.get("read_write_dns", "")
-        if not new_host:
-            return JSONResponse({"error": f"Instance '{instance_name}' has no DNS host"}, status_code=400)
+        # ── Try provisioned instance first ────────────────────────
+        try:
+            resp = w.api_client.do("GET", f"/api/2.0/database/instances/{instance_name}")
+            new_host = resp.get("read_write_dns", "")
+            if new_host:
+                cred_resp = w.api_client.do("POST", "/api/2.0/database/credentials", body={
+                    "instance_names": [instance_name],
+                    "request_id": str(uuid.uuid4()),
+                })
+                pg_pass = cred_resp.get("token", "")
+                pg_user = os.environ.get("PGUSER", "")
+                if not pg_user:
+                    try:
+                        pg_user = w.current_user.me().user_name
+                    except Exception:
+                        pg_user = "postgres"
+        except Exception:
+            pass
 
-        # Generate a credential specifically for this instance
-        import uuid
-        cred_resp = w.api_client.do("POST", "/api/2.0/database/credentials", body={
-            "instance_names": [instance_name],
-            "request_id": str(uuid.uuid4()),
-        })
-        pg_pass = cred_resp.get("token", "")
-        if not pg_pass:
-            return JSONResponse({"error": f"Failed to generate credential for '{instance_name}'"}, status_code=400)
-
-        # Determine user — SP client ID or current user
-        pg_user = os.environ.get("PGUSER", "")
-        if not pg_user:
+        # ── Fall back to autoscaling project (REST API) ─────────────
+        if not new_host or not pg_pass:
             try:
-                pg_user = w.current_user.me().user_name
-            except Exception:
-                pg_user = "postgres"
+                instance_type = "autoscaling"
+                project_path = f"projects/{instance_name}"
+                # List branches to find the production endpoint
+                br_resp = w.api_client.do("GET", f"/api/2.0/postgres/{project_path}/branches")
+                branches = br_resp.get("branches", [])
+                if not branches:
+                    return JSONResponse({"error": f"No branches found for project '{instance_name}'"}, status_code=400)
+                # Use production branch (or first available)
+                branch = None
+                for b in branches:
+                    b_name = b.get("name", "") if isinstance(b, dict) else getattr(b, "name", str(b))
+                    if "production" in b_name:
+                        branch = b
+                        break
+                if not branch:
+                    branch = branches[0]
+                branch_name = branch.get("name", str(branch)) if isinstance(branch, dict) else getattr(branch, "name", str(branch))
+                # Get endpoints on this branch
+                ep_resp = w.api_client.do("GET", f"/api/2.0/postgres/{branch_name}/endpoints")
+                endpoints = ep_resp.get("endpoints", [])
+                if not endpoints:
+                    return JSONResponse({"error": f"No endpoints found on branch '{branch_name}'"}, status_code=400)
+                ep = endpoints[0]
+                ep_name = ep.get("name", str(ep)) if isinstance(ep, dict) else getattr(ep, "name", str(ep))
+                # Get endpoint detail for host
+                ep_detail = w.api_client.do("GET", f"/api/2.0/postgres/{ep_name}")
+                ep_status = ep_detail.get("status", {})
+                ep_hosts = ep_status.get("hosts", {}) if isinstance(ep_status, dict) else {}
+                ep_host = ep_hosts.get("host", "") if isinstance(ep_hosts, dict) else ""
+                if not ep_host:
+                    return JSONResponse({"error": f"Endpoint '{ep_name}' has no host"}, status_code=400)
+                new_host = ep_host
+                # Generate credential
+                cred_resp = w.api_client.do("POST", "/api/2.0/postgres/credentials", body={"endpoint": ep_name})
+                pg_pass = cred_resp.get("token", "")
+                if not pg_pass:
+                    return JSONResponse({"error": f"Failed to generate credential for endpoint '{ep_name}'"}, status_code=400)
+                try:
+                    pg_user = w.current_user.me().user_name
+                except Exception:
+                    pg_user = os.environ.get("PGUSER", "postgres")
+            except Exception as e2:
+                return JSONResponse(
+                    {"error": f"Instance '{instance_name}' not found as provisioned or autoscaling: {e2}"},
+                    status_code=400,
+                )
 
-        # Close existing pool
+        if not new_host or not pg_pass:
+            return JSONResponse({"error": f"Could not resolve host/credentials for '{instance_name}'"}, status_code=400)
+
+        # ── Close existing pools and connect ──────────────────────
         if _pg_pool:
             try:
                 _pg_pool.closeall()
             except Exception:
                 pass
             _pg_pool = None
+        # Clear per-database pools (they point to the old instance)
+        with _database_pools_lock:
+            for _db_name, _pool in _database_pools.items():
+                try:
+                    _pool.closeall()
+                except Exception:
+                    pass
+            _database_pools.clear()
 
         _current_instance = instance_name
         _current_instance_host = new_host
         _invalidate_table_cache()
         _token_timestamp = time.time()
 
-        # Connect to 'postgres' first to discover databases
+        # Connect to discover databases
         target_db = database or "postgres"
         _pg_pool = psycopg2.pool.ThreadedConnectionPool(
             minconn=1, maxconn=5,
@@ -2432,7 +3419,7 @@ async def api_switch_instance(request: Request):
             user=pg_user, password=pg_pass, sslmode="require",
         )
         _current_database = target_db
-        logger.info("Connected to instance %s at %s/%s", instance_name, new_host, target_db)
+        logger.info("Connected to %s instance %s at %s/%s", instance_type, instance_name, new_host, target_db)
 
         # Discover databases on this instance
         dbs = _execute_read("SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname")
@@ -2459,6 +3446,7 @@ async def api_switch_instance(request: Request):
         return JSONResponse({
             "switched": True,
             "instance": instance_name,
+            "instance_type": instance_type,
             "database": target_db,
             "databases": db_names,
             "host": new_host,
@@ -2555,7 +3543,17 @@ async def api_delete_branch(request: Request):
     """Delete a branch."""
     branch_name = request.path_params["branch_name"]
     try:
-        result = _tool_delete_branch(branch_name, confirm=True)
+        body = await request.json()
+    except Exception:
+        body = {}
+    confirm = body.get("confirm", False)
+    if not confirm:
+        return JSONResponse(
+            {"error": "confirm must be true in the request body to delete a branch. This is a safety measure."},
+            status_code=400,
+        )
+    try:
+        result = _tool_delete_branch(branch_name, confirm=confirm)
         return JSONResponse(json.loads(result[0].text))
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=400)
@@ -2636,6 +3634,11 @@ async def health(request: Request):
 async def db_health(request: Request):
     """Health check for a specific database."""
     database = request.path_params["database"]
+    if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', database):
+        return JSONResponse(
+            {"error": f"Invalid database name: {database}"},
+            status_code=400,
+        )
     token = _request_database.set(database)
     try:
         _execute_read("SELECT 1")
@@ -2664,6 +3667,14 @@ class DatabaseMCPRouter:
         parts = path.strip("/").split("/")
         if len(parts) >= 2 and parts[1] == "mcp":
             database = parts[0]
+            # Validate database name
+            if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', database):
+                resp = JSONResponse(
+                    {"error": f"Invalid database name: {database}"},
+                    status_code=400,
+                )
+                await resp(scope, receive, send)
+                return
             # Rewrite scope path to /mcp/...
             new_path = "/" + "/".join(parts[1:])
             if not new_path.endswith("/"):

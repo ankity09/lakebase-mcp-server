@@ -8,3 +8,28 @@ resources:
       instance_name: supply-chain
       database_name: supply_chain_db
       permission: CAN_CONNECT_AND_CREATE
+  - name: database-2
+    database:
+      instance_name: f5-logs-intel
+      database_name: f5_logs_intel
+      permission: CAN_CONNECT_AND_CREATE
+  - name: database-3
+    database:
+      instance_name: papeg-demo
+      database_name: papeg_demo_db
+      permission: CAN_CONNECT_AND_CREATE
+  - name: database-4
+    database:
+      instance_name: ai-builder
+      database_name: smartfarm
+      permission: CAN_CONNECT_AND_CREATE
+  - name: database-5
+    database:
+      instance_name: ai-builder
+      database_name: radius_fleet_safety
+      permission: CAN_CONNECT_AND_CREATE
+  - name: database-6
+    database:
+      instance_name: ai-builder
+      database_name: zoox_fleet_intel
+      permission: CAN_CONNECT_AND_CREATE
