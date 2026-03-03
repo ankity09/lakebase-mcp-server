@@ -2545,19 +2545,6 @@ def _tool_configure_autoscaling(endpoint: str, min_cu: float, max_cu: float):
         return [TextContent(type="text", text=json.dumps({"error": f"min_cu and max_cu must be numbers, got: min_cu={min_cu!r}, max_cu={max_cu!r}"}, indent=2))]
     try:
         w = _get_ws()
-        # GET current state to avoid "non-default value" error when submitting unchanged values
-        get_resp = w.api_client.do("GET", f"/api/2.0/postgres/{endpoint}")
-        status = get_resp.get("status") or {}
-        current_min = status.get("autoscaling_limit_min_cu")
-        current_max = status.get("autoscaling_limit_max_cu")
-        if current_min is not None and current_max is not None:
-            if float(current_min) == min_cu and float(current_max) == max_cu:
-                return [TextContent(type="text", text=json.dumps({
-                    "status": "already_configured",
-                    "min_cu": min_cu,
-                    "max_cu": max_cu,
-                    "message": f"Autoscaling already configured: min_cu={min_cu}, max_cu={max_cu}",
-                }, indent=2))]
         resp = w.api_client.do("PATCH", f"/api/2.0/postgres/{endpoint}", body={
             "endpoint": {
                 "name": endpoint,
@@ -2567,16 +2554,26 @@ def _tool_configure_autoscaling(endpoint: str, min_cu: float, max_cu: float):
         })
         return [TextContent(type="text", text=json.dumps(resp, indent=2, default=str))]
     except Exception as e:
-        return [TextContent(type="text", text=json.dumps({"error": str(e)}, indent=2))]
+        err = str(e)
+        # API returns this error when submitted values are identical to current values (no-op)
+        if "non-default value" in err:
+            return [TextContent(type="text", text=json.dumps({
+                "status": "already_configured",
+                "min_cu": min_cu,
+                "max_cu": max_cu,
+                "message": f"Autoscaling already set to min_cu={min_cu}, max_cu={max_cu}",
+            }, indent=2))]
+        return [TextContent(type="text", text=json.dumps({"error": err}, indent=2))]
 
 
 def _tool_configure_scale_to_zero(endpoint: str, enabled: bool, idle_timeout_seconds: int = 300):
     """Enable/disable scale-to-zero (suspension) with idle timeout.
 
-    The Lakebase PATCH API only supports autoscaling.min_cu and autoscaling.max_cu.
-    The suspend_timeout_duration and no_suspension fields are not writable via PATCH
-    on this workspace's API version. We read current state and return success when
-    already at the desired state.
+    Uses the SDK-canonical PATCH format: snake_case field paths in update_mask URL param
+    + spec body. This is different from the legacy body-based format used for autoscaling.
+
+    SDK docs: update_endpoint sends body=endpoint.as_dict(), query={"update_mask": paths}
+    where paths are snake_case (FieldMask.ToJsonString just joins with commas, no conversion).
     """
     try:
         w = _get_ws()
@@ -2604,20 +2601,43 @@ def _tool_configure_scale_to_zero(endpoint: str, enabled: bool, idle_timeout_sec
                 "message": "Scale-to-zero already disabled",
             }, indent=2))]
 
-        # The suspend_timeout_duration and no_suspension fields are not writable via PATCH
-        # on this workspace's API version. Only autoscaling.min_cu/max_cu are supported.
-        return [TextContent(type="text", text=json.dumps({
-            "error": "Scale-to-zero configuration cannot be changed via this API",
-            "current_state": {
-                "suspend_timeout_duration": current_timeout,
-                "no_suspension": current_no_suspension,
-            },
-            "requested": {
-                "enabled": enabled,
-                "idle_timeout_seconds": timeout_sec,
-            },
-            "hint": "Use the Databricks UI (Lakebase → branch → endpoint → Configure) to change scale-to-zero settings.",
-        }, indent=2))]
+        # SDK-canonical format: spec body + snake_case update_mask URL param
+        # (FieldMask.ToJsonString joins paths with commas, no camelCase conversion)
+        if enabled:
+            spec_body = {"suspend_timeout_duration": desired_timeout_str, "no_suspension": False}
+            update_mask = "spec.suspend_timeout_duration,spec.no_suspension"
+        else:
+            spec_body = {"no_suspension": True}
+            update_mask = "spec.no_suspension"
+
+        logger.info("configure_scale_to_zero PATCH: endpoint=%s mask=%s spec=%s",
+                    endpoint, update_mask, spec_body)
+        try:
+            resp = w.api_client.do(
+                "PATCH", f"/api/2.0/postgres/{endpoint}",
+                body={"name": endpoint, "spec": spec_body},
+                query={"update_mask": update_mask},
+            )
+            logger.info("configure_scale_to_zero success: %s", resp)
+            return [TextContent(type="text", text=json.dumps(resp, indent=2, default=str))]
+        except Exception as patch_err:
+            err = str(patch_err)
+            logger.warning("configure_scale_to_zero PATCH failed: %s", err)
+            # API returns this when values are already at desired state
+            if "non-default value" in err:
+                return [TextContent(type="text", text=json.dumps({
+                    "status": "already_configured",
+                    "message": "Scale-to-zero is already at the requested state",
+                    "current_state": {"suspend_timeout_duration": current_timeout,
+                                      "no_suspension": current_no_suspension},
+                }, indent=2))]
+            return [TextContent(type="text", text=json.dumps({
+                "error": err,
+                "current_state": {"suspend_timeout_duration": current_timeout,
+                                  "no_suspension": current_no_suspension},
+                "attempted": {"enabled": enabled, "idle_timeout_seconds": timeout_sec,
+                              "update_mask": update_mask, "spec": spec_body},
+            }, indent=2))]
     except Exception as e:
         logger.error("configure_scale_to_zero failed for %s: %s", endpoint, e)
         return [TextContent(type="text", text=json.dumps({"error": str(e)}, indent=2))]
@@ -3921,6 +3941,19 @@ async def api_endpoints(request: Request):
                     for ep in eps:
                         if isinstance(ep, dict):
                             ep["_branch"] = branch_display
+                            # Enrich with individual GET to pick up status fields the list omits
+                            ep_name = ep.get("name", "")
+                            if ep_name:
+                                try:
+                                    full = w.api_client.do("GET", f"/api/2.0/postgres/{ep_name}")
+                                    full_status = full.get("status") or {}
+                                    ep_status = ep.setdefault("status", {})
+                                    for key in ("suspend_timeout_duration", "no_suspension",
+                                                "autoscaling_limit_min_cu", "autoscaling_limit_max_cu"):
+                                        if key in full_status and key not in ep_status:
+                                            ep_status[key] = full_status[key]
+                                except Exception:
+                                    pass
                     all_endpoints.extend(eps)
                 except Exception:
                     pass
