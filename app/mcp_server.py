@@ -2560,81 +2560,86 @@ def _tool_configure_autoscaling(endpoint: str, min_cu: float, max_cu: float):
 def _tool_configure_scale_to_zero(endpoint: str, enabled: bool, idle_timeout_seconds: int = 300):
     """Enable/disable scale-to-zero (suspension) with idle timeout.
 
-    The Databricks Lakebase PATCH API supports two body formats:
-    1. Legacy body-based: {"endpoint": {"autoscaling": {min_cu, max_cu}}, "update_mask": "autoscaling.*"}
-       - Only works for autoscaling fields (min_cu / max_cu), NOT scale-to-zero fields.
-    2. SDK flat body + URL query param: {"name": ..., "spec": {...}}, ?update_mask=spec.*
-       - spec.* URL params rejected as "Unknown field path" by this workspace's API version.
+    GET response shows: spec=null, status has autoscaling_limit_min_cu/max_cu and
+    suspend_timeout_duration. The legacy body PATCH only confirms autoscaling.min_cu
+    and autoscaling.max_cu as valid paths. Other paths give "non-default value" (invalid path)
+    or "Unknown field path" (URL param format not supported by this API version).
 
-    Diagnostic strategy: try both legacy-style (fields directly on endpoint object) and
-    the SDK flat-body approach, log each attempt so we can see which format the server accepts.
+    Strategy: GET current state first, skip PATCH if already at desired state (same value
+    triggers "non-default value" error), otherwise try PATCH with several candidate paths.
     """
     try:
         w = _get_ws()
         timeout_sec = int(idle_timeout_seconds)
+        desired_timeout_str = f"{timeout_sec}s"
 
-        # Step 1: GET the endpoint to log its full raw structure.
-        # This reveals what keys are present (name/spec/status/etc.) and what the
-        # current writable spec looks like, so we can derive the correct PATCH field paths.
-        try:
-            get_resp = w.api_client.do("GET", f"/api/2.0/postgres/{endpoint}")
-            logger.info("configure_scale_to_zero GET keys=%s  spec=%s  status=%s",
-                        list(get_resp.keys()),
-                        json.dumps(get_resp.get("spec"), default=str),
-                        json.dumps(get_resp.get("status"), default=str))
-            spec_from_get = get_resp.get("spec") or {}
-        except Exception as get_err:
-            logger.warning("configure_scale_to_zero GET failed: %s", get_err)
-            spec_from_get = {}
+        # GET current endpoint state (status has all readable fields; spec is null)
+        get_resp = w.api_client.do("GET", f"/api/2.0/postgres/{endpoint}")
+        status = get_resp.get("status") or {}
+        current_timeout = status.get("suspend_timeout_duration", "0s")
+        current_no_suspension = status.get("no_suspension", False)
+        current_min_cu = status.get("autoscaling_limit_min_cu", 0.5)
+        current_max_cu = status.get("autoscaling_limit_max_cu", 4.0)
+        logger.info("configure_scale_to_zero current: timeout=%s no_suspension=%s min_cu=%s max_cu=%s",
+                    current_timeout, current_no_suspension, current_min_cu, current_max_cu)
 
+        # Skip PATCH if already at desired state — same value causes "non-default value" API error
+        if enabled and current_timeout == desired_timeout_str and not current_no_suspension:
+            return [TextContent(type="text", text=json.dumps({
+                "status": "already_enabled",
+                "suspend_timeout_duration": current_timeout,
+                "message": f"Scale-to-zero already enabled with {current_timeout} timeout",
+            }, indent=2))]
+        if not enabled and current_no_suspension:
+            return [TextContent(type="text", text=json.dumps({
+                "status": "already_disabled",
+                "message": "Scale-to-zero already disabled",
+            }, indent=2))]
+
+        # Try PATCH — confirmed working: autoscaling.min_cu,autoscaling.max_cu (body-based)
+        # Include those alongside scale-to-zero fields (uses CURRENT values to avoid changing CU)
         if enabled:
-            # Build body using the spec from GET (preserves existing fields, adds timeout)
-            # Update_mask only covers suspend_timeout_duration + no_suspension
-            spec_body = {**spec_from_get, "endpoint_type": "ENDPOINT_TYPE_READ_WRITE",
-                         "suspend_timeout_duration": f"{timeout_sec}s"}
-            spec_body.pop("no_suspension", None)  # clear no_suspension to enable S2Z
-
-            attempts = [
-                # A: spec from GET merged with new timeout, body-based update_mask
-                ({"endpoint": {"name": endpoint, "spec": spec_body},
-                  "update_mask": "spec.suspend_timeout_duration,spec.no_suspension"}, None),
-                # B: autoscaling wrapper, update_mask using autoscaling paths
-                ({"endpoint": {"name": endpoint,
-                               "autoscaling": {"min_cu": spec_from_get.get("autoscaling_limit_min_cu", 0.5),
-                                               "max_cu": spec_from_get.get("autoscaling_limit_max_cu", 4.0),
-                                               "suspend_timeout_duration": f"{timeout_sec}s"}},
-                  "update_mask": "autoscaling.min_cu,autoscaling.max_cu,autoscaling.suspend_timeout_duration"}, None),
-                # C: flat spec body + URL param update_mask (snake_case)
-                ({"name": endpoint, "spec": spec_body}, "spec.suspend_timeout_duration"),
+            patch_attempts = [
+                {"endpoint": {"name": endpoint,
+                              "autoscaling": {"min_cu": current_min_cu, "max_cu": current_max_cu,
+                                              "suspend_timeout_duration": desired_timeout_str}},
+                 "update_mask": "autoscaling.min_cu,autoscaling.max_cu,autoscaling.suspend_timeout_duration"},
+                {"endpoint": {"name": endpoint,
+                              "autoscaling": {"min_cu": current_min_cu, "max_cu": current_max_cu},
+                              "scale_to_zero": {"suspend_timeout_duration": desired_timeout_str}},
+                 "update_mask": "autoscaling.min_cu,autoscaling.max_cu,scale_to_zero.suspend_timeout_duration"},
+                {"endpoint": {"name": endpoint,
+                              "autoscaling": {"min_cu": current_min_cu, "max_cu": current_max_cu,
+                                              "suspend_timeout": timeout_sec}},
+                 "update_mask": "autoscaling.min_cu,autoscaling.max_cu,autoscaling.suspend_timeout"},
             ]
         else:
-            attempts = [
-                # A: spec with no_suspension=True
-                ({"endpoint": {"name": endpoint, "spec": {**spec_from_get,
-                               "endpoint_type": "ENDPOINT_TYPE_READ_WRITE", "no_suspension": True}},
-                  "update_mask": "spec.no_suspension"}, None),
-                # B: autoscaling wrapper with confirmed working fields + no_suspension
-                ({"endpoint": {"name": endpoint,
-                               "autoscaling": {"min_cu": spec_from_get.get("autoscaling_limit_min_cu", 0.5),
-                                               "max_cu": spec_from_get.get("autoscaling_limit_max_cu", 4.0),
-                                               "no_suspension": True}},
-                  "update_mask": "autoscaling.min_cu,autoscaling.max_cu,autoscaling.no_suspension"}, None),
+            patch_attempts = [
+                {"endpoint": {"name": endpoint,
+                              "autoscaling": {"min_cu": current_min_cu, "max_cu": current_max_cu,
+                                              "no_suspension": True}},
+                 "update_mask": "autoscaling.min_cu,autoscaling.max_cu,autoscaling.no_suspension"},
+                {"endpoint": {"name": endpoint,
+                              "autoscaling": {"min_cu": current_min_cu, "max_cu": current_max_cu},
+                              "no_suspension": True},
+                 "update_mask": "autoscaling.min_cu,autoscaling.max_cu,no_suspension"},
             ]
 
-        for i, (body, query_mask) in enumerate(attempts):
-            kwargs = {"body": body}
-            if query_mask:
-                kwargs["query"] = {"update_mask": query_mask}
-            logger.info("configure_scale_to_zero attempt %d body=%s query_mask=%s",
-                        i + 1, json.dumps(body, default=str), query_mask)
+        for i, body in enumerate(patch_attempts):
+            logger.info("configure_scale_to_zero attempt %d: %s", i + 1, json.dumps(body, default=str))
             try:
-                resp = w.api_client.do("PATCH", f"/api/2.0/postgres/{endpoint}", **kwargs)
-                logger.info("configure_scale_to_zero attempt %d success: %s", i + 1, json.dumps(resp, default=str))
+                resp = w.api_client.do("PATCH", f"/api/2.0/postgres/{endpoint}", body=body)
+                logger.info("configure_scale_to_zero attempt %d success", i + 1)
                 return [TextContent(type="text", text=json.dumps(resp, indent=2, default=str))]
             except Exception as e_i:
                 logger.warning("configure_scale_to_zero attempt %d failed: %s", i + 1, e_i)
 
-        return [TextContent(type="text", text=json.dumps({"error": "All attempts failed — check logs for full detail"}, indent=2))]
+        return [TextContent(type="text", text=json.dumps({
+            "error": "Scale-to-zero update not supported by this endpoint's API version",
+            "current_state": {"suspend_timeout_duration": current_timeout,
+                              "no_suspension": current_no_suspension},
+            "hint": "The suspend_timeout_duration and no_suspension fields cannot be updated via PATCH on this workspace.",
+        }, indent=2))]
     except Exception as e:
         logger.error("configure_scale_to_zero failed for %s: %s", endpoint, e)
         return [TextContent(type="text", text=json.dumps({"error": str(e)}, indent=2))]
