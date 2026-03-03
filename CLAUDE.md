@@ -255,16 +255,24 @@ GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO \"<app-sp-client-id>\";
 
 **Autoscaling Lakebase only** — the app SP needs an OAuth PostgreSQL role. The UI only supports password-based roles; OAuth roles must be created via SQL. Get the app SP client ID from the app's Authorization tab, then run this SQL in the Lakebase UI (branch → Roles & Databases → Edit data):
 
+First, find the app SP's **integer SCIM ID** (not the UUID application ID):
+```bash
+databricks api get "/api/2.0/preview/scim/v2/ServicePrincipals?filter=applicationId+eq+<app-sp-client-id>" --profile=<PROFILE>
+# Look for the "id" field in the response — it's a large integer like 1234567890123456
+```
+
+Then run this SQL in the Lakebase UI (branch → Roles & Databases → Edit data):
 ```sql
 CREATE ROLE "<app-sp-client-id>" WITH LOGIN;
 SECURITY LABEL FOR databricks_auth ON ROLE "<app-sp-client-id>"
-  IS 'id=<app-sp-client-id>,type=service_principal';
+  IS 'id=<integer-scim-id>,type=service_principal';
 GRANT ALL ON DATABASE <database_name> TO "<app-sp-client-id>";
 GRANT ALL ON ALL TABLES IN SCHEMA public TO "<app-sp-client-id>";
 GRANT USAGE ON SCHEMA public TO "<app-sp-client-id>";
 ```
 
-> **How to find the app SP client ID:** In the Databricks UI, go to Apps → your app → **Authorization** tab. The service principal client ID is shown there (a UUID like `eec1e9bf-...`).
+> **How to find the app SP client ID (UUID):** In the Databricks UI, go to Apps → your app → **Authorization** tab.
+> **Note:** The security label requires the integer SCIM ID (`id=<int64>`), not the UUID application ID.
 
 ### Step 5: Verify
 
