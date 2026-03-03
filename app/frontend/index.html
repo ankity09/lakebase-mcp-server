@@ -4341,9 +4341,18 @@ function resolveState(val) {
   if (!val) return 'unknown';
   if (typeof val === 'string') return val;
   if (typeof val === 'object') {
-    return val.state || val.status || val.lifecycle_state || val.phase || 'unknown';
+    // Try common field names; recurse if the value is itself an object
+    for (const key of ['state', 'current_state', 'status', 'lifecycle_state', 'phase', 'value']) {
+      const v = val[key];
+      if (typeof v === 'string' && v.length > 0) return v;
+      if (v && typeof v === 'object') return resolveState(v);
+    }
+    // Last resort: first non-empty string value in the object
+    for (const v of Object.values(val)) {
+      if (typeof v === 'string' && v.length > 0) return v;
+    }
   }
-  return String(val);
+  return 'unknown';
 }
 
 function stateClass(state) {
@@ -5063,10 +5072,7 @@ async function loadBranches(project) {
     container.innerHTML = `<div class="table-wrap"><table>
       <thead><tr><th>Name</th><th>Parent</th><th>State</th><th>Created</th><th>Actions</th></tr></thead>
       <tbody>${branches.map(b => {
-        const rawState = b.state;
-        const state = (typeof rawState === 'object' && rawState !== null)
-          ? (rawState.state || rawState.value || rawState.status || 'unknown')
-          : (rawState || b.status || 'unknown');
+        const state = resolveState(b.state || b.status);
         const sc = stateClass(state);
         const branchKey = b.name || b.id;
         const branchSlug = branchKey.includes('/branches/') ? branchKey.split('/branches/').pop() : branchKey;
@@ -5171,17 +5177,22 @@ async function loadEndpoints(project, branch) {
     }
 
     container.innerHTML = '<div class="card-grid">' + endpoints.map(ep => {
-      const state = ep.state || ep.status || 'unknown';
+      const state = resolveState(ep.status?.current_state || ep.status?.state || ep.state);
       const sc = stateClass(state);
       const fullName = ep.name || ep.id;
       // Extract just the endpoint slug from the full resource path (e.g. "projects/.../endpoints/ep-xxx" → "ep-xxx")
       const name = fullName.includes('/endpoints/') ? fullName.split('/endpoints/').pop() : fullName;
-      const host = ep.host || ep.hostname || '--';
+      // Host is in status.hosts.host per SDK EndpointStatus
+      const host = ep.status?.hosts?.host || ep.host || ep.hostname || '--';
       const branchTag = ep._branch ? `<span class="badge badge-type" style="font-size:10px;margin-left:6px">${escapeHtml(formatBranchSlug(ep._branch))}</span>` : '';
-      const minCu = ep.min_cu || ep.autoscaling?.min_cu || '--';
-      const maxCu = ep.max_cu || ep.autoscaling?.max_cu || '--';
-      const stzEnabled = ep.scale_to_zero?.enabled ?? ep.autoscaling?.scale_to_zero_enabled ?? false;
-      const idleTimeout = ep.scale_to_zero?.idle_timeout_seconds ?? ep.autoscaling?.idle_timeout_seconds ?? 300;
+      // Real field names from SDK EndpointSpec
+      const spec = ep.spec || {};
+      const minCu = spec.autoscaling_limit_min_cu ?? ep.min_cu ?? ep.autoscaling?.min_cu ?? '--';
+      const maxCu = spec.autoscaling_limit_max_cu ?? ep.max_cu ?? ep.autoscaling?.max_cu ?? '--';
+      // spec.no_suspension is the INVERSE of scale-to-zero enabled
+      const stzEnabled = spec.no_suspension !== undefined ? !spec.no_suspension : (ep.scale_to_zero?.enabled ?? false);
+      const idleTimeoutStr = spec.suspend_timeout_duration || String(ep.scale_to_zero?.idle_timeout_seconds ?? 300);
+      const idleTimeout = parseInt(idleTimeoutStr) || 300;
 
       // Use slug as DOM element key (safe characters); pass fullName to API calls
       const epKey = name;
