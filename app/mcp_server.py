@@ -32,6 +32,7 @@ import re
 import threading
 import time
 import uuid
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal
 
@@ -76,13 +77,13 @@ MAX_MIGRATION_STATES = 100
 MAX_DATABASE_POOLS = 20
 
 # Connection mode: "provisioned" (app.yaml PGHOST) or "autoscaling" (LAKEBASE_PROJECT)
-_connection_mode = None        # set by _detect_connection_mode()
-_autoscale_endpoint = None     # full endpoint resource name (autoscaling only)
-_token_timestamp = 0.0         # time.time() when current token was generated
+_connection_mode = None        # set by _detect_connection_mode() — kept for backward compat
 _TOKEN_REFRESH_SECONDS = 50 * 60  # refresh token every 50 min (expires at 60)
 _current_database = None       # override for database switcher (None = use env default)
-_current_instance = None       # override for instance switcher (None = use app.yaml default)
-_current_instance_host = None  # PGHOST override when switching instances
+
+# Per-instance state (replaces _autoscale_endpoint, _token_timestamp, _current_instance, _current_instance_host)
+_default_instance_state = None   # InstanceState built at startup from env vars
+_current_instance_state = None   # InstanceState set by api_switch_instance(); None = use default
 
 # Per-request database context (for /db/{database}/mcp/ routing)
 _request_database: contextvars.ContextVar[str | None] = contextvars.ContextVar(
@@ -113,19 +114,89 @@ def _get_ws():
 
 
 def _detect_connection_mode():
-    """Auto-detect provisioned vs autoscaling based on env vars."""
-    global _connection_mode
+    """Auto-detect provisioned vs autoscaling based on env vars. Also builds _default_instance_state."""
+    global _connection_mode, _default_instance_state
+    _default_instance_state = _build_instance_state_from_env()
+    _connection_mode = _default_instance_state.mode
+    logger.info("Connection mode: %s", _connection_mode)
+    return _connection_mode
+
+
+# ── Per-instance state ───────────────────────────────────────────────
+
+
+@dataclass
+class InstanceState:
+    """Holds all connection parameters for a single Lakebase instance."""
+    name: str | None          # None = startup default; matches Databricks instance name
+    mode: str                 # "provisioned" | "autoscaling"
+    host: str                 # PGHOST or autoscaling endpoint host (discovered lazily)
+    port: int = 5432
+    user: str = ""
+    ssl: str = "require"
+    token_timestamp: float = 0.0   # time.time() when credentials were last fetched
+    # Autoscaling only — needed for token refresh:
+    autoscale_project: str = ""    # UUID e.g. "99a2c711-..."
+    autoscale_branch: str = "production"
+    autoscale_endpoint: str = ""   # full resource path e.g. "projects/.../branches/.../endpoints/ep-xxx"
+
+
+def _build_instance_state_from_env() -> "InstanceState":
+    """Build the default InstanceState from environment variables at startup."""
     if os.environ.get("PGHOST"):
-        _connection_mode = "provisioned"
+        return InstanceState(
+            name=None,
+            mode="provisioned",
+            host=os.environ["PGHOST"],
+            port=int(os.environ.get("PGPORT", "5432")),
+            user=os.environ.get("PGUSER", ""),
+            ssl=os.environ.get("PGSSLMODE", "require"),
+        )
     elif os.environ.get("LAKEBASE_PROJECT"):
-        _connection_mode = "autoscaling"
+        return InstanceState(
+            name=None,
+            mode="autoscaling",
+            host="",  # discovered lazily by _fetch_credentials_for_instance()
+            autoscale_project=os.environ["LAKEBASE_PROJECT"],
+            autoscale_branch=os.environ.get("LAKEBASE_BRANCH", "production"),
+            autoscale_endpoint=os.environ.get("LAKEBASE_ENDPOINT", ""),
+        )
     else:
         raise RuntimeError(
             "No Lakebase config found. Set PGHOST (provisioned via app.yaml database resource) "
             "or LAKEBASE_PROJECT (autoscaling via env vars)."
         )
-    logger.info("Connection mode: %s", _connection_mode)
-    return _connection_mode
+
+
+def _get_active_instance() -> "InstanceState | None":
+    """Return the active InstanceState: switched instance if set, else default."""
+    return _current_instance_state or _default_instance_state
+
+
+def _fetch_credentials_for_instance(state: "InstanceState") -> dict:
+    """Fetch fresh credentials for a given instance (provisioned or autoscaling).
+
+    Returns dict with keys: host, port, user, password, ssl.
+    As a side effect, updates state.host (autoscaling, host discovered lazily)
+    and state.token_timestamp.
+    """
+    if state.mode == "provisioned":
+        token = _get_pg_token_provisioned()
+        state.token_timestamp = time.time()
+        return {
+            "host": state.host,
+            "port": state.port,
+            "user": state.user,
+            "password": token,
+            "ssl": state.ssl,
+        }
+    else:  # autoscaling
+        creds = _get_autoscale_credentials(state=state)
+        state.host = creds["host"]        # update host in state (discovered lazily)
+        state.token_timestamp = time.time()
+        # Normalize: ensure ssl key present (autoscale always uses require)
+        creds.setdefault("ssl", state.ssl or "require")
+        return creds
 
 
 # ── Lakebase connection pool ─────────────────────────────────────────
@@ -142,19 +213,32 @@ def _get_pg_token_provisioned():
     return ""
 
 
-def _get_autoscale_credentials():
-    """Discover autoscaling endpoint and generate a fresh credential."""
-    global _autoscale_endpoint, _token_timestamp
+def _get_autoscale_credentials(state: "InstanceState | None" = None):
+    """Discover autoscaling endpoint and generate a fresh credential.
+
+    If state is provided, uses state.autoscale_project/branch/endpoint and stores
+    the discovered endpoint back to state.autoscale_endpoint.
+    Otherwise falls back to environment variables (used only for startup default).
+    """
     w = _get_ws()
-    project = os.environ["LAKEBASE_PROJECT"]
-    branch = os.environ.get("LAKEBASE_BRANCH", "production")
-    endpoint_id = os.environ.get("LAKEBASE_ENDPOINT", "")
+
+    if state is not None:
+        project = state.autoscale_project
+        branch = state.autoscale_branch
+        endpoint_id = ""
+        existing_endpoint = state.autoscale_endpoint
+    else:
+        project = os.environ["LAKEBASE_PROJECT"]
+        branch = os.environ.get("LAKEBASE_BRANCH", "production")
+        endpoint_id = os.environ.get("LAKEBASE_ENDPOINT", "")
+        # Fall back to default instance state's endpoint for env-based defaults
+        existing_endpoint = _default_instance_state.autoscale_endpoint if _default_instance_state else ""
 
     branch_path = f"projects/{project}/branches/{branch}"
 
     # Build or discover endpoint name using REST API (w.postgres.* SDK methods are unreliable)
-    if _autoscale_endpoint:
-        endpoint_name = _autoscale_endpoint
+    if existing_endpoint:
+        endpoint_name = existing_endpoint
     elif endpoint_id:
         endpoint_name = f"{branch_path}/endpoints/{endpoint_id}"
     else:
@@ -167,7 +251,11 @@ def _get_autoscale_credentials():
         endpoint_name = ep0.get("name") if isinstance(ep0, dict) else getattr(ep0, "name", str(ep0))
         logger.info("Auto-discovered endpoint: %s", endpoint_name)
 
-    _autoscale_endpoint = endpoint_name
+    # Store discovered endpoint back to state (or default state if env-based)
+    if state is not None:
+        state.autoscale_endpoint = endpoint_name
+    elif _default_instance_state is not None:
+        _default_instance_state.autoscale_endpoint = endpoint_name
 
     # Get host from endpoint
     ep_detail = w.api_client.do("GET", f"/api/2.0/postgres/{endpoint_name}")
@@ -179,7 +267,6 @@ def _get_autoscale_credentials():
 
     # Generate credential
     cred_resp = w.api_client.do("POST", "/api/2.0/postgres/credentials", body={"endpoint": endpoint_name})
-    _token_timestamp = time.time()
     # Log response structure (keys only, not values) to diagnose auth issues
     logger.info("Credential response keys: %s", list(cred_resp.keys()) if isinstance(cred_resp, dict) else type(cred_resp))
     pg_pass = cred_resp.get("token") or cred_resp.get("password", "")
@@ -200,10 +287,12 @@ def _get_autoscale_credentials():
 
 def _init_pg_pool():
     """Initialize the PostgreSQL connection pool. Supports both provisioned and autoscaling."""
-    global _pg_pool, _connection_mode, _token_timestamp
+    global _pg_pool
 
-    if _connection_mode is None:
+    inst = _get_active_instance()
+    if inst is None:
         _detect_connection_mode()
+        inst = _get_active_instance()
 
     if _pg_pool:
         try:
@@ -212,35 +301,24 @@ def _init_pg_pool():
             pass
 
     dbname_override = _current_database  # database switcher override
+    dbname = dbname_override or os.environ.get("PGDATABASE", "") or os.environ.get("LAKEBASE_DATABASE", "databricks_postgres")
 
-    if _connection_mode == "provisioned":
-        pg_host = _current_instance_host or os.environ.get("PGHOST")
-        pg_port = int(os.environ.get("PGPORT", "5432"))
-        pg_db = dbname_override or os.environ.get("PGDATABASE", "")
-        pg_user = os.environ.get("PGUSER", "")
-        pg_pass = _get_pg_token_provisioned()
-        pg_ssl = os.environ.get("PGSSLMODE", "require")
-        _token_timestamp = time.time()
-    else:  # autoscaling
-        creds = _get_autoscale_credentials()
-        pg_host = creds["host"]
-        pg_port = creds["port"]
-        pg_db = dbname_override or creds["database"]
-        pg_user = creds["user"]
-        pg_pass = creds["password"]
-        pg_ssl = "require"
+    creds = _fetch_credentials_for_instance(inst)
+    if inst.mode == "autoscaling":
+        # autoscale returns a "database" field in creds; use it if no override
+        dbname = dbname_override or creds.get("database", dbname)
 
     _pg_pool = psycopg2.pool.ThreadedConnectionPool(
         minconn=1,
         maxconn=5,
-        host=pg_host,
-        port=pg_port,
-        dbname=pg_db,
-        user=pg_user,
-        password=pg_pass,
-        sslmode=pg_ssl,
+        host=creds["host"],
+        port=creds["port"],
+        dbname=dbname,
+        user=creds["user"],
+        password=creds["password"],
+        sslmode=creds["ssl"],
     )
-    logger.info("Lakebase pool initialized [%s]: %s:%s/%s", _connection_mode, pg_host, pg_port, pg_db)
+    logger.info("Lakebase pool initialized [%s/%s]: %s:%s/%s", inst.mode, inst.name, creds["host"], creds["port"], dbname)
 
 
 def _get_or_create_db_pool(database: str) -> psycopg2.pool.ThreadedConnectionPool:
@@ -255,25 +333,17 @@ def _get_or_create_db_pool(database: str) -> psycopg2.pool.ThreadedConnectionPoo
             )
 
     # Create new pool for this database
-    if _connection_mode is None:
+    inst = _get_active_instance()
+    if inst is None:
         _detect_connection_mode()
+        inst = _get_active_instance()
 
-    if _connection_mode == "provisioned":
-        pg_host = _current_instance_host or os.environ.get("PGHOST")
-        pg_port = int(os.environ.get("PGPORT", "5432"))
-        pg_user = os.environ.get("PGUSER", "")
-        pg_pass = _get_pg_token_provisioned()
-        pg_ssl = os.environ.get("PGSSLMODE", "require")
-    else:
-        creds = _get_autoscale_credentials()
-        pg_host, pg_port, pg_user, pg_pass, pg_ssl = (
-            creds["host"], creds["port"], creds["user"], creds["password"], "require",
-        )
+    creds = _fetch_credentials_for_instance(inst)
 
     pool = psycopg2.pool.ThreadedConnectionPool(
         minconn=1, maxconn=5,
-        host=pg_host, port=pg_port, dbname=database,
-        user=pg_user, password=pg_pass, sslmode=pg_ssl,
+        host=creds["host"], port=creds["port"], dbname=database,
+        user=creds["user"], password=creds["password"], sslmode=creds["ssl"],
     )
     with _database_pools_lock:
         # Double-check: another thread may have created it while we were connecting
@@ -282,15 +352,17 @@ def _get_or_create_db_pool(database: str) -> psycopg2.pool.ThreadedConnectionPoo
         else:
             pool.closeall()
             pool = _database_pools[database]
-    logger.info("Created pool for database: %s", database)
+    logger.info("Created pool for database: %s [%s/%s]", database, inst.mode, inst.name)
     return pool
 
 
 def _maybe_refresh_token():
     """Reinitialize pool if OAuth token is about to expire."""
     global _pg_pool
-    if _token_timestamp and (time.time() - _token_timestamp) > _TOKEN_REFRESH_SECONDS:
-        logger.info("Token approaching expiry, refreshing pools...")
+    inst = _get_active_instance()
+    token_ts = inst.token_timestamp if inst else 0.0
+    if token_ts and (time.time() - token_ts) > _TOKEN_REFRESH_SECONDS:
+        logger.info("Token approaching expiry for instance [%s], refreshing pools...", inst.name if inst else "default")
         # Save references to old pools before creating new ones
         old_pg_pool = _pg_pool
         old_db_pools = {}
@@ -2143,18 +2215,24 @@ def _tool_list_schemas():
 
 def _tool_get_connection_info():
     """Return connection info (no password)."""
+    inst = _get_active_instance()
+    mode = inst.mode if inst else (_connection_mode or "unknown")
+    host = inst.host if inst else os.environ.get("PGHOST", "")
+    port = inst.port if inst else int(os.environ.get("PGPORT", "5432"))
+    user = inst.user if inst else os.environ.get("PGUSER", "")
+    ssl = inst.ssl if inst else os.environ.get("PGSSLMODE", "require")
     info = {
-        "connection_mode": _connection_mode or "unknown",
-        "host": os.environ.get("PGHOST", ""),
-        "port": int(os.environ.get("PGPORT", "5432")),
+        "connection_mode": mode,
+        "host": host,
+        "port": port,
         "database": _current_database or os.environ.get("PGDATABASE", ""),
-        "user": os.environ.get("PGUSER", ""),
-        "sslmode": os.environ.get("PGSSLMODE", "require"),
+        "user": user,
+        "sslmode": ssl,
     }
-    if _connection_mode == "autoscaling":
-        info["project"] = os.environ.get("LAKEBASE_PROJECT", "")
-        info["branch"] = os.environ.get("LAKEBASE_BRANCH", "production")
-        info["endpoint"] = _autoscale_endpoint or ""
+    if mode == "autoscaling":
+        info["project"] = (inst.autoscale_project if inst else None) or os.environ.get("LAKEBASE_PROJECT", "")
+        info["branch"] = (inst.autoscale_branch if inst else None) or os.environ.get("LAKEBASE_BRANCH", "production")
+        info["endpoint"] = (inst.autoscale_endpoint if inst else None) or ""
     return [TextContent(type="text", text=json.dumps(info, indent=2))]
 
 
@@ -3258,10 +3336,13 @@ async def api_databases(request: Request):
             "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname"
         )
         current = _current_database or os.environ.get("PGDATABASE", "") or os.environ.get("LAKEBASE_DATABASE", "")
-        # Determine current instance name
-        instance = _current_instance
-        if not instance:
-            # Try to extract from app.yaml config — fall back to PGHOST
+        # Determine current instance name from active state
+        inst = _get_active_instance()
+        if inst and inst.name:
+            instance = inst.name
+        elif inst and inst.host:
+            instance = inst.host.split(".")[0].replace("instance-", "") or "unknown"
+        else:
             pg_host = os.environ.get("PGHOST", "")
             instance = pg_host.split(".")[0].replace("instance-", "") if pg_host else "unknown"
         return JSONResponse({
@@ -3316,7 +3397,7 @@ async def api_switch_database(request: Request):
 
 async def api_switch_instance(request: Request):
     """Switch to a different Lakebase instance (provisioned or autoscaling)."""
-    global _current_instance, _current_instance_host, _current_database, _pg_pool, _token_timestamp
+    global _current_instance_state, _current_database, _pg_pool
     body = await request.json()
     instance_name = body.get("instance", "").strip()
     database = body.get("database", "").strip()  # optional, default to first available
@@ -3325,8 +3406,7 @@ async def api_switch_instance(request: Request):
     if not re.match(r'^[a-zA-Z0-9_-]+$', instance_name):
         return JSONResponse({"error": f"Invalid instance name: {instance_name}"}, status_code=400)
 
-    old_instance = _current_instance
-    old_host = _current_instance_host
+    old_instance_state = _current_instance_state
     old_db = _current_database
     try:
         w = _get_ws()
@@ -3423,10 +3503,21 @@ async def api_switch_instance(request: Request):
                     pass
             _database_pools.clear()
 
-        _current_instance = instance_name
-        _current_instance_host = new_host
+        # Build and store new InstanceState for this instance
+        new_state = InstanceState(
+            name=instance_name,
+            mode=instance_type,
+            host=new_host,
+            port=5432,
+            user=pg_user,
+            ssl="require",
+            token_timestamp=time.time(),
+        )
+        if instance_type == "autoscaling":
+            new_state.autoscale_project = instance_name
+            new_state.autoscale_endpoint = ep_name  # resolved above in autoscaling branch
+        _current_instance_state = new_state
         _invalidate_table_cache()
-        _token_timestamp = time.time()
 
         # Connect to discover databases
         target_db = database or "postgres"
@@ -3459,7 +3550,8 @@ async def api_switch_instance(request: Request):
                 target_db = final_db
 
         _execute_read("SELECT 1")  # verify
-        logger.info("Switched instance: %s -> %s (db: %s)", old_instance, instance_name, target_db)
+        old_inst_name = old_instance_state.name if old_instance_state else "default"
+        logger.info("Switched instance: %s -> %s (db: %s)", old_inst_name, instance_name, target_db)
         return JSONResponse({
             "switched": True,
             "instance": instance_name,
@@ -3469,9 +3561,8 @@ async def api_switch_instance(request: Request):
             "host": new_host,
         })
     except Exception as e:
-        # Roll back
-        _current_instance = old_instance
-        _current_instance_host = old_host
+        # Roll back to previous instance state
+        _current_instance_state = old_instance_state
         _current_database = old_db
         if _pg_pool:
             try:
@@ -3495,18 +3586,21 @@ async def api_info(request: Request):
     except Exception:
         pass
     current_db = _current_database or os.environ.get("PGDATABASE", "") or os.environ.get("LAKEBASE_DATABASE", "")
+    inst = _get_active_instance()
+    mode = inst.mode if inst else (_connection_mode or "unknown")
+    host = inst.host if inst else os.environ.get("PGHOST", "")
     info = {
         "server": "lakebase-mcp",
         "mcp_endpoint": "/mcp/",
-        "connection_mode": _connection_mode or "unknown",
+        "connection_mode": mode,
         "database": current_db,
-        "host": os.environ.get("PGHOST", ""),
+        "host": host,
         "lakebase_connected": pg_ok,
         "tools_count": len(TOOLS),
     }
-    if _connection_mode == "autoscaling":
-        info["project"] = os.environ.get("LAKEBASE_PROJECT", "")
-        info["branch"] = os.environ.get("LAKEBASE_BRANCH", "production")
+    if mode == "autoscaling":
+        info["project"] = (inst.autoscale_project if inst else None) or os.environ.get("LAKEBASE_PROJECT", "")
+        info["branch"] = (inst.autoscale_branch if inst else None) or os.environ.get("LAKEBASE_BRANCH", "production")
     return JSONResponse(info)
 
 
