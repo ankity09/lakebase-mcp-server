@@ -2607,9 +2607,6 @@ def _tool_configure_scale_to_zero(endpoint: str, enabled: bool, idle_timeout_sec
         logger.info("configure_scale_to_zero project=%s current_timeout=%s", project_path, current_timeout)
 
         desired_timeout = f"{timeout_sec}s" if enabled else "0s"
-        # Project GET has no "spec" key — all config lives under "status".
-        # update_mask must mirror the actual response structure.
-        update_mask = "status.default_endpoint_settings.suspend_timeout_duration"
 
         # Idempotency check
         if current_timeout == desired_timeout:
@@ -2620,16 +2617,32 @@ def _tool_configure_scale_to_zero(endpoint: str, enabled: bool, idle_timeout_sec
                             if enabled else "Scale-to-zero already disabled"),
             }, indent=2))]
 
-        patch_body = {"name": project_path, "status": {
-            "default_endpoint_settings": {"suspend_timeout_duration": desired_timeout}
-        }}
-        logger.info("configure_scale_to_zero PATCH project=%s mask=%s body=%s",
-                    project_path, update_mask, patch_body)
-        resp = w.api_client.do(
-            "PATCH", f"/api/2.0/postgres/{project_path}",
-            body=patch_body,
-            query={"update_mask": update_mask},
-        )
+        # Try all known update_mask paths in order: stop at first success.
+        # spec.suspend_timeout_duration (endpoint spec) and
+        # status/spec.default_endpoint_settings.* (project) all returned
+        # "Unknown field path" — trying status.suspend_timeout_duration on endpoint.
+        attempts = [
+            (endpoint,     "status.suspend_timeout_duration",
+             {"name": endpoint,      "status": {"suspend_timeout_duration": desired_timeout}}),
+            (project_path, "spec.default_endpoint_settings.suspend_timeout_duration",
+             {"name": project_path,  "spec":   {"default_endpoint_settings": {"suspend_timeout_duration": desired_timeout}}}),
+        ]
+        last_err = None
+        for path, mask, body in attempts:
+            try:
+                logger.info("configure_scale_to_zero attempt PATCH %s mask=%s", path, mask)
+                resp = w.api_client.do(
+                    "PATCH", f"/api/2.0/postgres/{path}",
+                    body=body,
+                    query={"update_mask": mask},
+                )
+                logger.info("configure_scale_to_zero success with mask=%s: %s", mask, resp)
+                return [TextContent(type="text", text=json.dumps(resp, indent=2, default=str))]
+            except Exception as e:
+                last_err = str(e)
+                logger.warning("configure_scale_to_zero attempt failed mask=%s: %s", mask, last_err)
+                continue
+        return [TextContent(type="text", text=json.dumps({"error": last_err}, indent=2))]
         logger.info("configure_scale_to_zero success: %s", resp)
         return [TextContent(type="text", text=json.dumps(resp, indent=2, default=str))]
     except Exception as e:
