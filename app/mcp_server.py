@@ -2535,7 +2535,12 @@ def _tool_delete_branch(branch: str, confirm: bool = False):
 
 
 def _tool_configure_autoscaling(endpoint: str, min_cu: float, max_cu: float):
-    """Configure autoscaling min/max CU."""
+    """Configure autoscaling min/max CU.
+
+    Uses SDK-canonical format: spec body with autoscaling_limit_* field names
+    + snake_case update_mask URL param. The legacy body format (autoscaling.min_cu)
+    never actually updated values — those paths are not recognized by the API.
+    """
     if min_cu is None or max_cu is None:
         return [TextContent(type="text", text=json.dumps({"error": "min_cu and max_cu are required and must be numbers"}, indent=2))]
     try:
@@ -2545,17 +2550,19 @@ def _tool_configure_autoscaling(endpoint: str, min_cu: float, max_cu: float):
         return [TextContent(type="text", text=json.dumps({"error": f"min_cu and max_cu must be numbers, got: min_cu={min_cu!r}, max_cu={max_cu!r}"}, indent=2))]
     try:
         w = _get_ws()
-        resp = w.api_client.do("PATCH", f"/api/2.0/postgres/{endpoint}", body={
-            "endpoint": {
-                "name": endpoint,
-                "autoscaling": {"min_cu": min_cu, "max_cu": max_cu},
-            },
-            "update_mask": "autoscaling.min_cu,autoscaling.max_cu",
-        })
+        logger.info("configure_autoscaling PATCH: endpoint=%s min_cu=%s max_cu=%s", endpoint, min_cu, max_cu)
+        resp = w.api_client.do(
+            "PATCH", f"/api/2.0/postgres/{endpoint}",
+            body={"name": endpoint, "spec": {
+                "autoscaling_limit_min_cu": min_cu,
+                "autoscaling_limit_max_cu": max_cu,
+            }},
+            query={"update_mask": "spec.autoscaling_limit_min_cu,spec.autoscaling_limit_max_cu"},
+        )
+        logger.info("configure_autoscaling success: %s", resp)
         return [TextContent(type="text", text=json.dumps(resp, indent=2, default=str))]
     except Exception as e:
         err = str(e)
-        # API returns this error when submitted values are identical to current values (no-op)
         if "non-default value" in err:
             return [TextContent(type="text", text=json.dumps({
                 "status": "already_configured",
