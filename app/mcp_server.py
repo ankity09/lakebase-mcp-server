@@ -2369,8 +2369,14 @@ def _tool_list_branches(project: str):
         project_path = _resolve_project(project)
         resp = w.api_client.do("GET", f"/api/2.0/postgres/{project_path}/branches")
         branches = resp.get("branches", [])
-        branch_names = [b.get("name", b.get("branch_id", "?")) for b in branches if isinstance(b, dict)]
-        logger.info("list_branches %s → %d branches: %s", project_path, len(branch_names), branch_names)
+        for b in branches:
+            if isinstance(b, dict):
+                name = b.get("name", b.get("branch_id", "?"))
+                expire = b.get("expire_time") or b.get("expiry_time") or b.get("expiration")
+                no_exp = b.get("no_expiry") or b.get("spec", {}).get("no_expiry") if isinstance(b.get("spec"), dict) else b.get("no_expiry")
+                state = b.get("state") or b.get("status")
+                logger.info("  branch: %s | expire_time=%s | no_expiry=%s | state=%s | keys=%s",
+                            name, expire, no_exp, state, list(b.keys()))
         return [TextContent(type="text", text=json.dumps(branches, indent=2, default=str))]
     except Exception as e:
         return [TextContent(type="text", text=json.dumps({"error": str(e)}, indent=2))]
