@@ -2607,8 +2607,9 @@ def _tool_configure_scale_to_zero(endpoint: str, enabled: bool, idle_timeout_sec
         logger.info("configure_scale_to_zero project=%s current_timeout=%s", project_path, current_timeout)
 
         desired_timeout = f"{timeout_sec}s" if enabled else "0s"
-        update_mask = "spec.default_endpoint_settings.suspend_timeout_duration"
-        spec_body = {"default_endpoint_settings": {"suspend_timeout_duration": desired_timeout}}
+        # Project GET has no "spec" key — all config lives under "status".
+        # update_mask must mirror the actual response structure.
+        update_mask = "status.default_endpoint_settings.suspend_timeout_duration"
 
         # Idempotency check
         if current_timeout == desired_timeout:
@@ -2619,11 +2620,14 @@ def _tool_configure_scale_to_zero(endpoint: str, enabled: bool, idle_timeout_sec
                             if enabled else "Scale-to-zero already disabled"),
             }, indent=2))]
 
-        logger.info("configure_scale_to_zero PATCH project=%s mask=%s spec=%s",
-                    project_path, update_mask, spec_body)
+        patch_body = {"name": project_path, "status": {
+            "default_endpoint_settings": {"suspend_timeout_duration": desired_timeout}
+        }}
+        logger.info("configure_scale_to_zero PATCH project=%s mask=%s body=%s",
+                    project_path, update_mask, patch_body)
         resp = w.api_client.do(
             "PATCH", f"/api/2.0/postgres/{project_path}",
-            body={"name": project_path, "spec": spec_body},
+            body=patch_body,
             query={"update_mask": update_mask},
         )
         logger.info("configure_scale_to_zero success: %s", resp)
