@@ -2574,79 +2574,58 @@ def _tool_configure_autoscaling(endpoint: str, min_cu: float, max_cu: float):
 
 
 def _tool_configure_scale_to_zero(endpoint: str, enabled: bool, idle_timeout_seconds: int = 300):
-    """Enable/disable scale-to-zero (suspension) with idle timeout.
+    """Configure scale-to-zero via project-level default_endpoint_settings.
 
-    Uses the SDK-canonical PATCH format: snake_case field paths in update_mask URL param
-    + spec body. This is different from the legacy body-based format used for autoscaling.
+    S2Z is stored in ProjectSpec.default_endpoint_settings (not EndpointSpec).
+    The correct API is PATCH on the project (not the endpoint) with field path
+    spec.default_endpoint_settings.suspend_timeout_duration.
 
-    SDK docs: update_endpoint sends body=endpoint.as_dict(), query={"update_mask": paths}
-    where paths are snake_case (FieldMask.ToJsonString just joins with commas, no conversion).
+    Enable:  suspend_timeout_duration = Ns  (N seconds before idle suspension)
+    Disable: suspend_timeout_duration = 0s  (0 = no timeout = suspension disabled)
     """
     try:
         w = _get_ws()
         timeout_sec = int(idle_timeout_seconds)
-        desired_timeout_str = f"{timeout_sec}s"
 
-        # GET current endpoint state (spec=null in response; all fields are under status)
-        get_resp = w.api_client.do("GET", f"/api/2.0/postgres/{endpoint}")
-        status = get_resp.get("status") or {}
-        current_timeout = status.get("suspend_timeout_duration", "0s")
-        current_no_suspension = status.get("no_suspension", False)
-        logger.info("configure_scale_to_zero current: timeout=%s no_suspension=%s",
-                    current_timeout, current_no_suspension)
-
-        # Return success if already at desired state
-        if enabled and current_timeout == desired_timeout_str:
+        # Extract project path from full endpoint path.
+        # endpoint = "projects/{project_id}/branches/{branch_id}/endpoints/{ep_id}"
+        # project  = "projects/{project_id}"
+        parts = endpoint.split("/")
+        if len(parts) < 2 or parts[0] != "projects":
             return [TextContent(type="text", text=json.dumps({
-                "status": "already_enabled",
+                "error": f"Invalid endpoint path: expected 'projects/{{id}}/...', got: {endpoint!r}",
+            }, indent=2))]
+        project_path = f"{parts[0]}/{parts[1]}"
+
+        # GET current project state to read default_endpoint_settings
+        project_resp = w.api_client.do("GET", f"/api/2.0/postgres/{project_path}")
+        proj_spec = project_resp.get("spec") or {}
+        default_settings = proj_spec.get("default_endpoint_settings") or {}
+        current_timeout = default_settings.get("suspend_timeout_duration", "0s")
+        logger.info("configure_scale_to_zero project=%s current_timeout=%s", project_path, current_timeout)
+
+        desired_timeout = f"{timeout_sec}s" if enabled else "0s"
+        update_mask = "spec.default_endpoint_settings.suspend_timeout_duration"
+        spec_body = {"default_endpoint_settings": {"suspend_timeout_duration": desired_timeout}}
+
+        # Idempotency check
+        if current_timeout == desired_timeout:
+            return [TextContent(type="text", text=json.dumps({
+                "status": "already_configured",
                 "suspend_timeout_duration": current_timeout,
-                "message": f"Scale-to-zero already enabled with {current_timeout} timeout",
-            }, indent=2))]
-        if not enabled and (current_no_suspension or current_timeout in ("0s", "0", "")):
-            return [TextContent(type="text", text=json.dumps({
-                "status": "already_disabled",
-                "message": "Scale-to-zero already disabled (no suspend timeout configured)",
+                "message": (f"Scale-to-zero already enabled with {current_timeout} idle timeout"
+                            if enabled else "Scale-to-zero already disabled"),
             }, indent=2))]
 
-        # SDK-canonical format: spec body + snake_case update_mask URL param.
-        # spec.no_suspension is confirmed "Unknown field path" on this workspace.
-        # Use suspend_timeout_duration for both enable (set to Ns) and disable (set to 0s).
-        # 0s = "no timeout configured" which means the endpoint won't auto-suspend.
-        if enabled:
-            spec_body = {"suspend_timeout_duration": desired_timeout_str}
-            update_mask = "spec.suspend_timeout_duration"
-        else:
-            spec_body = {"suspend_timeout_duration": "0s"}
-            update_mask = "spec.suspend_timeout_duration"
-
-        logger.info("configure_scale_to_zero PATCH: endpoint=%s mask=%s spec=%s",
-                    endpoint, update_mask, spec_body)
-        try:
-            resp = w.api_client.do(
-                "PATCH", f"/api/2.0/postgres/{endpoint}",
-                body={"name": endpoint, "spec": spec_body},
-                query={"update_mask": update_mask},
-            )
-            logger.info("configure_scale_to_zero success: %s", resp)
-            return [TextContent(type="text", text=json.dumps(resp, indent=2, default=str))]
-        except Exception as patch_err:
-            err = str(patch_err)
-            logger.warning("configure_scale_to_zero PATCH failed: %s", err)
-            # API returns this when values are already at desired state
-            if "non-default value" in err:
-                return [TextContent(type="text", text=json.dumps({
-                    "status": "already_configured",
-                    "message": "Scale-to-zero is already at the requested state",
-                    "current_state": {"suspend_timeout_duration": current_timeout,
-                                      "no_suspension": current_no_suspension},
-                }, indent=2))]
-            return [TextContent(type="text", text=json.dumps({
-                "error": err,
-                "current_state": {"suspend_timeout_duration": current_timeout,
-                                  "no_suspension": current_no_suspension},
-                "attempted": {"enabled": enabled, "idle_timeout_seconds": timeout_sec,
-                              "update_mask": update_mask, "spec": spec_body},
-            }, indent=2))]
+        logger.info("configure_scale_to_zero PATCH project=%s mask=%s spec=%s",
+                    project_path, update_mask, spec_body)
+        resp = w.api_client.do(
+            "PATCH", f"/api/2.0/postgres/{project_path}",
+            body={"name": project_path, "spec": spec_body},
+            query={"update_mask": update_mask},
+        )
+        logger.info("configure_scale_to_zero success: %s", resp)
+        return [TextContent(type="text", text=json.dumps(resp, indent=2, default=str))]
     except Exception as e:
         logger.error("configure_scale_to_zero failed for %s: %s", endpoint, e)
         return [TextContent(type="text", text=json.dumps({"error": str(e)}, indent=2))]
