@@ -749,13 +749,18 @@ def _resolve_parent_branch(project: str, preferred: str = "production") -> str:
                 logger.info("resolve_parent_branch: display_name match '%s' → %s", preferred, b["name"])
                 return b["name"]
 
-        # 3. First no-expiry branch (permanent branch = production equivalent)
+        # 3. Branch marked as default in status (this IS the production branch)
         for b in branches:
-            spec = b.get("spec") if isinstance(b.get("spec"), dict) else {}
-            no_expiry = spec.get("no_expiry") or b.get("no_expiry")
-            expire = b.get("expire_time") or b.get("expiry_time")
-            if no_expiry or not expire:
-                logger.info("resolve_parent_branch: '%s' not found; using permanent branch %s", preferred, b.get("name"))
+            bstatus = b.get("status") if isinstance(b.get("status"), dict) else {}
+            if bstatus.get("default") is True:
+                logger.info("resolve_parent_branch: '%s' → default (production) branch %s", preferred, b.get("name"))
+                return b.get("name", f"{project_path}/branches/{preferred}")
+
+        # 4. First no-expiry branch in status (permanent = production equivalent)
+        for b in branches:
+            bstatus = b.get("status") if isinstance(b.get("status"), dict) else {}
+            if not bstatus.get("expire_time"):
+                logger.info("resolve_parent_branch: '%s' → permanent branch (no expire_time) %s", preferred, b.get("name"))
                 return b.get("name", f"{project_path}/branches/{preferred}")
 
         # 4. First branch in the list
@@ -2555,35 +2560,37 @@ def _tool_configure_autoscaling(endpoint: str, min_cu: float, max_cu: float):
 def _tool_configure_scale_to_zero(endpoint: str, enabled: bool, idle_timeout_seconds: int = 300):
     """Enable/disable scale-to-zero (suspension) with idle timeout.
 
-    Uses the same body-based update_mask + {"endpoint": {...}} wrapper pattern
-    as configure_autoscaling (confirmed working).
+    SDK schema (EndpointSpec): suspend_timeout_duration and no_suspension are
+    top-level fields under spec (NOT under autoscaling). Body format:
+      {"endpoint": {"name": ..., "spec": {"endpoint_type": ..., ...}}, "update_mask": "spec.*"}
 
-    GET shows suspend_timeout_duration under status.* (read schema).
-    PATCH write schema: fields go under autoscaling.* (same as min_cu/max_cu).
-    - Enable:  autoscaling.suspend_timeout_duration = "Xs"
-    - Disable: autoscaling.no_suspension = true
+    - Enable:  spec.suspend_timeout_duration = "Xs" + clear spec.no_suspension
+    - Disable: spec.no_suspension = True
     """
     try:
         w = _get_ws()
         if enabled:
+            # Include spec.no_suspension in update_mask (without value in body) to clear it
             body = {
                 "endpoint": {
                     "name": endpoint,
-                    "autoscaling": {
+                    "spec": {
+                        "endpoint_type": "ENDPOINT_TYPE_READ_WRITE",
                         "suspend_timeout_duration": f"{int(idle_timeout_seconds)}s",
                     },
                 },
-                "update_mask": "autoscaling.suspend_timeout_duration",
+                "update_mask": "spec.suspend_timeout_duration,spec.no_suspension",
             }
         else:
             body = {
                 "endpoint": {
                     "name": endpoint,
-                    "autoscaling": {
+                    "spec": {
+                        "endpoint_type": "ENDPOINT_TYPE_READ_WRITE",
                         "no_suspension": True,
                     },
                 },
-                "update_mask": "autoscaling.no_suspension",
+                "update_mask": "spec.no_suspension",
             }
         logger.info("configure_scale_to_zero PATCH body: %s", json.dumps(body))
         resp = w.api_client.do("PATCH", f"/api/2.0/postgres/{endpoint}", body=body)
