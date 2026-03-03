@@ -2493,9 +2493,10 @@ def _tool_configure_scale_to_zero(endpoint: str, enabled: bool, idle_timeout_sec
     Uses the same body-based update_mask + {"endpoint": {...}} wrapper pattern
     as configure_autoscaling (confirmed working).
 
-    To enable: set spec.suspend_timeout_duration to "Xs" (seconds string).
-    To disable: set spec.no_suspension = true (never suspend).
-    Both fields go inside: {"endpoint": {"name": ..., "spec": {...}}, "update_mask": "spec.xxx"}
+    GET shows suspend_timeout_duration under status.* (read schema).
+    PATCH write schema: fields go under autoscaling.* (same as min_cu/max_cu).
+    - Enable:  autoscaling.suspend_timeout_duration = "Xs"
+    - Disable: autoscaling.no_suspension = true
     """
     try:
         w = _get_ws()
@@ -2503,21 +2504,21 @@ def _tool_configure_scale_to_zero(endpoint: str, enabled: bool, idle_timeout_sec
             body = {
                 "endpoint": {
                     "name": endpoint,
-                    "spec": {
+                    "autoscaling": {
                         "suspend_timeout_duration": f"{int(idle_timeout_seconds)}s",
                     },
                 },
-                "update_mask": "spec.suspend_timeout_duration",
+                "update_mask": "autoscaling.suspend_timeout_duration",
             }
         else:
             body = {
                 "endpoint": {
                     "name": endpoint,
-                    "spec": {
+                    "autoscaling": {
                         "no_suspension": True,
                     },
                 },
-                "update_mask": "spec.no_suspension",
+                "update_mask": "autoscaling.no_suspension",
             }
         logger.info("configure_scale_to_zero PATCH body: %s", json.dumps(body))
         resp = w.api_client.do("PATCH", f"/api/2.0/postgres/{endpoint}", body=body)

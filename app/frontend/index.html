@@ -3152,9 +3152,8 @@
             </div>
             <div class="form-group">
               <label>Parent Branch</label>
-              <input id="newBranchParent" list="parentBranchList" placeholder="production" value="production">
+              <input id="newBranchParent" list="parentBranchList" placeholder="Select or type branch name">
               <datalist id="parentBranchList">
-                <option value="production">
               </datalist>
             </div>
           </div>
@@ -5116,24 +5115,27 @@ function showCreateBranch() {
 }
 
 async function loadParentBranchOptions(project) {
-  // Populates datalist suggestions; input still allows typing any branch name (e.g. "production")
+  // Populates datalist with real branches; auto-fills input with the first branch found
   const dl = document.getElementById('parentBranchList');
+  const input = document.getElementById('newBranchParent');
   if (!dl || !project) return;
   try {
     const data = await api(`/api/branches?project=${encodeURIComponent(project)}`);
     const branches = Array.isArray(data) ? data : (data.branches || []);
-    // Always include "production" as a suggestion (it's the default root branch)
-    const options = new Map([['production', 'production']]);
-    branches.forEach(b => {
+    const slugs = [];
+    dl.innerHTML = branches.map(b => {
       const key = b.name || b.id;
       const slug = key.includes('/branches/') ? key.split('/branches/').pop() : key;
-      options.set(slug, b.display_name || formatBranchSlug(slug));
-    });
-    dl.innerHTML = [...options.entries()].map(
-      ([slug, label]) => `<option value="${escapeHtml(slug)}" label="${escapeHtml(label)}">`
-    ).join('');
+      const label = b.display_name || formatBranchSlug(slug);
+      slugs.push(slug);
+      return `<option value="${escapeHtml(slug)}" label="${escapeHtml(label)}">`;
+    }).join('');
+    // Pre-fill with first actual branch (not a hardcoded default that may not exist)
+    if (input && !input.value && slugs.length > 0) {
+      input.value = slugs[0];
+    }
   } catch (e) {
-    // Leave datalist with just "production" — user can still type freely
+    // User can still type any branch name freely
   }
 }
 
