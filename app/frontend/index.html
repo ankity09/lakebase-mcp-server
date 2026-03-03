@@ -3458,6 +3458,7 @@ let currentTable = null;
 let toolsData = [];
 let tablesData = [];
 let projectsData = [];
+let activeProjectId = null; // set from api/info on startup; used to auto-select default project
 let queryHistory = JSON.parse(localStorage.getItem('lakebase_query_history') || '[]');
 let commandPaletteOpen = false;
 let commandSelectedIndex = 0;
@@ -4427,6 +4428,8 @@ async function init() {
     document.getElementById('statusText').textContent = ok ? 'Connected' : 'Disconnected';
     document.getElementById('brandDot').style.background = ok ? 'var(--neon-green)' : 'var(--red)';
     document.getElementById('brandDot').style.boxShadow = ok ? '0 0 8px rgba(0,229,153,0.5)' : '0 0 8px rgba(239,68,68,0.5)';
+    // Store active autoscaling project so branch/endpoint selects can auto-select it
+    if (info.project) activeProjectId = 'projects/' + info.project;
   } catch (e) {
     document.getElementById('statusDot').className = 'status-dot err';
     document.getElementById('statusText').textContent = 'Error';
@@ -4435,6 +4438,7 @@ async function init() {
   loadTables();
   loadTools();
   loadDatabases();
+  loadProjects(); // Pre-load so branch/endpoint selects are ready with default project
   buildConnectionStrings();
   renderQueryHistory();
   measureLatency();
@@ -5028,7 +5032,8 @@ function populateProjectSelects() {
   selects.forEach(id => {
     const sel = document.getElementById(id);
     if (!sel) return;
-    const current = sel.value;
+    // Preserve manually-selected value; fall back to activeProjectId from api/info
+    const current = sel.value || activeProjectId || '';
     sel.innerHTML = '<option value="">Select project...</option>' +
       autoscalingProjects.map(p => {
         const name = p.name || p.id;
