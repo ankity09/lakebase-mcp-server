@@ -104,7 +104,7 @@ def main():
     tools = mcp_call(url, token, "tools/list", {}, 2)
     tool_names = [t["name"] for t in tools["result"]["tools"]]
     print(f"  Tools: {tool_names}")
-    assert len(tool_names) == 34, f"Expected 34 tools, got {len(tool_names)}"
+    assert len(tool_names) == 33, f"Expected 33 tools, got {len(tool_names)}"
     print("  PASS\n")
 
     # 4. list_tables

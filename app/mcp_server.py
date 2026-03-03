@@ -1,6 +1,6 @@
 """Reusable Lakebase MCP Server — Databricks App.
 
-Exposes 34 MCP tools (with annotations), 2 resources, and 3 prompts over
+Exposes 33 MCP tools (with annotations), 2 resources, and 3 prompts over
 StreamableHTTP at /mcp.  Supports both provisioned and autoscaling Lakebase.
 
 Connection modes (auto-detected):
@@ -16,7 +16,7 @@ Tools:
   PERF:      list_slow_queries
   INFRA:     list_projects, describe_project, get_connection_string, list_branches, list_endpoints, get_endpoint_status
   BRANCH:    create_branch, delete_branch
-  SCALE:     configure_autoscaling, configure_scale_to_zero
+  SCALE:     configure_autoscaling
   QUALITY:   profile_table
   MIGRATION: prepare_database_migration, complete_database_migration
   TUNING:    prepare_query_tuning, complete_query_tuning
@@ -1271,29 +1271,6 @@ TOOLS = [
             "required": ["endpoint", "min_cu", "max_cu"],
         },
     ),
-    Tool(
-        name="configure_scale_to_zero",
-        description="Enable or disable scale-to-zero (suspend) on a Lakebase endpoint with idle timeout.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "endpoint": {
-                    "type": "string",
-                    "description": "Full endpoint resource path.",
-                },
-                "enabled": {
-                    "type": "boolean",
-                    "description": "Enable (true) or disable (false) scale-to-zero.",
-                },
-                "idle_timeout_seconds": {
-                    "type": "integer",
-                    "description": "Seconds of idle time before suspending. Default: 300.",
-                    "default": 300,
-                },
-            },
-            "required": ["endpoint", "enabled"],
-        },
-    ),
     # ── Data quality tools ──────────────────────────────────────────
     Tool(
         name="profile_table",
@@ -1492,7 +1469,6 @@ _TOOL_ANNOTATIONS = {
     "delete_branch":            {"readOnlyHint": False, "destructiveHint": True,  "idempotentHint": False},
     # SCALE tools
     "configure_autoscaling":    {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True},
-    "configure_scale_to_zero":  {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True},
     # QUALITY tools
     "profile_table":            {"readOnlyHint": True,  "destructiveHint": False, "idempotentHint": True},
     # Neon-parity tools
@@ -1613,12 +1589,6 @@ async def handle_call_tool(name: str, arguments: dict):
         elif name == "configure_autoscaling":
             return _tool_configure_autoscaling(
                 arguments["endpoint"], arguments["min_cu"], arguments["max_cu"]
-            )
-        elif name == "configure_scale_to_zero":
-            return _tool_configure_scale_to_zero(
-                arguments["endpoint"],
-                arguments["enabled"],
-                arguments.get("idle_timeout_seconds", 300),
             )
         # Data quality tools
         elif name == "profile_table":
@@ -2571,83 +2541,6 @@ def _tool_configure_autoscaling(endpoint: str, min_cu: float, max_cu: float):
                 "message": f"Autoscaling already set to min_cu={min_cu}, max_cu={max_cu}",
             }, indent=2))]
         return [TextContent(type="text", text=json.dumps({"error": err}, indent=2))]
-
-
-def _tool_configure_scale_to_zero(endpoint: str, enabled: bool, idle_timeout_seconds: int = 300):
-    """Configure scale-to-zero via project-level default_endpoint_settings.
-
-    S2Z is stored in ProjectSpec.default_endpoint_settings (not EndpointSpec).
-    The correct API is PATCH on the project (not the endpoint) with field path
-    spec.default_endpoint_settings.suspend_timeout_duration.
-
-    Enable:  suspend_timeout_duration = Ns  (N seconds before idle suspension)
-    Disable: suspend_timeout_duration = 0s  (0 = no timeout = suspension disabled)
-    """
-    try:
-        w = _get_ws()
-        timeout_sec = int(idle_timeout_seconds)
-
-        # Extract project path from full endpoint path.
-        # endpoint = "projects/{project_id}/branches/{branch_id}/endpoints/{ep_id}"
-        # project  = "projects/{project_id}"
-        parts = endpoint.split("/")
-        if len(parts) < 2 or parts[0] != "projects":
-            return [TextContent(type="text", text=json.dumps({
-                "error": f"Invalid endpoint path: expected 'projects/{{id}}/...', got: {endpoint!r}",
-            }, indent=2))]
-        project_path = f"{parts[0]}/{parts[1]}"
-
-        # GET current project state to read default_endpoint_settings
-        project_resp = w.api_client.do("GET", f"/api/2.0/postgres/{project_path}")
-        logger.info("configure_scale_to_zero project GET keys=%s spec=%s",
-                    list(project_resp.keys()), project_resp.get("spec"))
-        proj_spec = project_resp.get("spec") or {}
-        default_settings = proj_spec.get("default_endpoint_settings") or {}
-        current_timeout = default_settings.get("suspend_timeout_duration", "0s")
-        logger.info("configure_scale_to_zero project=%s current_timeout=%s", project_path, current_timeout)
-
-        desired_timeout = f"{timeout_sec}s" if enabled else "0s"
-
-        # Idempotency check
-        if current_timeout == desired_timeout:
-            return [TextContent(type="text", text=json.dumps({
-                "status": "already_configured",
-                "suspend_timeout_duration": current_timeout,
-                "message": (f"Scale-to-zero already enabled with {current_timeout} idle timeout"
-                            if enabled else "Scale-to-zero already disabled"),
-            }, indent=2))]
-
-        # Try all known update_mask paths in order: stop at first success.
-        # spec.suspend_timeout_duration (endpoint spec) and
-        # status/spec.default_endpoint_settings.* (project) all returned
-        # "Unknown field path" — trying status.suspend_timeout_duration on endpoint.
-        attempts = [
-            (endpoint,     "status.suspend_timeout_duration",
-             {"name": endpoint,      "status": {"suspend_timeout_duration": desired_timeout}}),
-            (project_path, "spec.default_endpoint_settings.suspend_timeout_duration",
-             {"name": project_path,  "spec":   {"default_endpoint_settings": {"suspend_timeout_duration": desired_timeout}}}),
-        ]
-        last_err = None
-        for path, mask, body in attempts:
-            try:
-                logger.info("configure_scale_to_zero attempt PATCH %s mask=%s", path, mask)
-                resp = w.api_client.do(
-                    "PATCH", f"/api/2.0/postgres/{path}",
-                    body=body,
-                    query={"update_mask": mask},
-                )
-                logger.info("configure_scale_to_zero success with mask=%s: %s", mask, resp)
-                return [TextContent(type="text", text=json.dumps(resp, indent=2, default=str))]
-            except Exception as e:
-                last_err = str(e)
-                logger.warning("configure_scale_to_zero attempt failed mask=%s: %s", mask, last_err)
-                continue
-        return [TextContent(type="text", text=json.dumps({"error": last_err}, indent=2))]
-        logger.info("configure_scale_to_zero success: %s", resp)
-        return [TextContent(type="text", text=json.dumps(resp, indent=2, default=str))]
-    except Exception as e:
-        logger.error("configure_scale_to_zero failed for %s: %s", endpoint, e)
-        return [TextContent(type="text", text=json.dumps({"error": str(e)}, indent=2))]
 
 
 # ── Tool implementations (Data quality) ──────────────────────────────
@@ -3854,17 +3747,6 @@ async def api_project_detail(request: Request):
         return JSONResponse({"error": str(e)}, status_code=400)
 
 
-async def api_project_raw(request: Request):
-    """Return the raw project GET response for debugging field paths."""
-    project_id = request.path_params["project_id"]
-    try:
-        w = _get_ws()
-        resp = w.api_client.do("GET", f"/api/2.0/postgres/{project_id}")
-        return JSONResponse(resp)
-    except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=400)
-
-
 async def api_branches(request: Request):
     """List branches on a project."""
     project = request.query_params.get("project", "")
@@ -3983,23 +3865,14 @@ async def api_endpoints(request: Request):
 
 
 async def api_endpoint_config(request: Request):
-    """Configure autoscaling or scale-to-zero on an endpoint."""
+    """Configure autoscaling (min/max CU) on an endpoint."""
     endpoint_name = request.path_params["endpoint_name"]
     body = await request.json()
-    results = {}
     try:
         if "min_cu" in body and "max_cu" in body:
             r = _tool_configure_autoscaling(endpoint_name, body["min_cu"], body["max_cu"])
-            results["autoscaling"] = json.loads(r[0].text)
-        if "scale_to_zero" in body:
-            s2z = body["scale_to_zero"]
-            r = _tool_configure_scale_to_zero(
-                endpoint_name, s2z.get("enabled", False), s2z.get("idle_timeout_seconds", 300)
-            )
-            results["scale_to_zero"] = json.loads(r[0].text)
-        if not results:
-            return JSONResponse({"error": "Provide min_cu+max_cu and/or scale_to_zero config"}, status_code=400)
-        return JSONResponse(results)
+            return JSONResponse({"autoscaling": json.loads(r[0].text)})
+        return JSONResponse({"error": "Provide min_cu and max_cu"}, status_code=400)
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=400)
 
@@ -4203,7 +4076,6 @@ app = Starlette(
         Route("/api/explain", api_explain, methods=["POST"]),
         # REST API — infrastructure
         Route("/api/projects", api_projects, methods=["GET"]),
-        Route("/api/project-raw/{project_id:path}", api_project_raw, methods=["GET"]),
         Route("/api/projects/{project_id:path}", api_project_detail, methods=["GET"]),
         Route("/api/branches", api_branches, methods=["GET"]),
         Route("/api/branches/create", api_create_branch, methods=["POST"]),

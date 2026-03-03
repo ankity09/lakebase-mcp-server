@@ -93,7 +93,7 @@ env:
 - `LAKEBASE_BRANCH`: In Databricks → Lakebase → your project → click the branch → **ID** field on the branch overview (looks like `br-cool-haze-d2hbxj2m`). This is **not** the display name.
 - `LAKEBASE_ENDPOINT` is not needed — the server auto-discovers the first active endpoint on the branch
 
-## MCP Tools (34)
+## MCP Tools (33)
 
 All tools include MCP annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`) for client-side safety UI.
 
@@ -124,7 +124,6 @@ All tools include MCP annotations (`readOnlyHint`, `destructiveHint`, `idempoten
 | `create_branch` | BRANCH | Create a dev/test branch from a parent |
 | `delete_branch` | BRANCH | Delete a branch (not production) with confirm safety |
 | `configure_autoscaling` | SCALE | Set min/max compute units on an endpoint |
-| `configure_scale_to_zero` | SCALE | Enable/disable suspend + idle timeout |
 | `profile_table` | QUALITY | Column-level profiling: nulls, distinct, min/max, avg |
 | `describe_branch` | EXPLORE | Tree view of all objects in a database: schemas, tables, views, functions, sequences, indexes |
 | `compare_database_schema` | EXPLORE | Compare schemas between two databases, returns unified diff |
@@ -176,7 +175,7 @@ All tools include MCP annotations (`readOnlyHint`, `destructiveHint`, `idempoten
 | `/api/branches/create` | POST | Create a new branch |
 | `/api/branches/{name}` | DELETE | Delete a branch |
 | `/api/endpoints` | GET | List endpoints (?project=...&branch=...) |
-| `/api/endpoints/{name}/config` | PATCH | Configure autoscaling/scale-to-zero |
+| `/api/endpoints/{name}/config` | PATCH | Configure autoscaling (min/max CU) |
 | `/api/profile/{table}` | GET | Profile a table (column-level stats) |
 | `/api/setup-role-sql` | GET | Generate OAuth role SQL for the app SP (autoscaling only) |
 
@@ -192,7 +191,7 @@ The root URL (`/`) serves a single-page application with Neon.tech-inspired side
 **Infrastructure**
 4. **Projects** — Card grid of Lakebase projects with status badges
 5. **Branches** — Branch management with create/delete operations
-6. **Endpoints** — Endpoint cards with autoscaling and scale-to-zero configuration
+6. **Endpoints** — Endpoint cards with autoscaling configuration
 
 **Quality**
 7. **Profiler** — Column-level data profiling (nulls, distinct, min/max, avg)
