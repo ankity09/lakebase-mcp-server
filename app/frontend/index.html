@@ -3144,7 +3144,7 @@
           <div class="form-row-3">
             <div class="form-group">
               <label>Project</label>
-              <input id="newBranchProject" type="text" placeholder="Project name">
+              <input id="newBranchProject" type="text" placeholder="Project name" onchange="loadParentBranchOptions(this.value)">
             </div>
             <div class="form-group">
               <label>Branch Name</label>
@@ -3152,7 +3152,9 @@
             </div>
             <div class="form-group">
               <label>Parent Branch</label>
-              <input id="newBranchParent" type="text" placeholder="production" value="production">
+              <select id="newBranchParent">
+                <option value="">Select a project first</option>
+              </select>
             </div>
           </div>
           <div style="display:flex; gap:8px;">
@@ -5099,9 +5101,38 @@ function showCreateBranch() {
   const card = document.getElementById('createBranchCard');
   card.style.display = '';
   document.getElementById('createBranchResult').innerHTML = '';
-  // Pre-fill project from dropdown
+  // Pre-fill project from dropdown and load actual branches for parent select
   const sel = document.getElementById('branchProjectSelect');
-  if (sel.value) document.getElementById('newBranchProject').value = sel.value;
+  if (sel.value) {
+    document.getElementById('newBranchProject').value = sel.value;
+    loadParentBranchOptions(sel.value);
+  }
+}
+
+async function loadParentBranchOptions(project) {
+  const sel = document.getElementById('newBranchParent');
+  if (!sel) return;
+  if (!project) {
+    sel.innerHTML = '<option value="">Select a project first</option>';
+    return;
+  }
+  sel.innerHTML = '<option value="">Loading branches...</option>';
+  try {
+    const data = await api(`/api/branches?project=${encodeURIComponent(project)}`);
+    const branches = Array.isArray(data) ? data : (data.branches || []);
+    if (!branches.length) {
+      sel.innerHTML = '<option value="">No branches found</option>';
+      return;
+    }
+    sel.innerHTML = branches.map(b => {
+      const key = b.name || b.id;
+      const slug = key.includes('/branches/') ? key.split('/branches/').pop() : key;
+      const label = b.display_name || formatBranchSlug(slug);
+      return `<option value="${escapeHtml(slug)}">${escapeHtml(label)}</option>`;
+    }).join('');
+  } catch (e) {
+    sel.innerHTML = '<option value="">Error loading branches</option>';
+  }
 }
 
 async function createBranch() {

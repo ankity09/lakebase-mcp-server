@@ -2478,14 +2478,17 @@ def _tool_configure_autoscaling(endpoint: str, min_cu: float, max_cu: float):
 def _tool_configure_scale_to_zero(endpoint: str, enabled: bool, idle_timeout_seconds: int = 300):
     """Enable/disable scale-to-zero (suspension) with idle timeout.
 
-    SDK field names (EndpointSpec):
+    SDK EndpointSpec fields (snake_case in body):
       spec.no_suspension (bool): True = scale-to-zero DISABLED, False = ENABLED
-      spec.suspend_timeout_duration (Duration string): e.g. "300s"
-    update_mask is a URL query parameter, not in the body.
+      spec.suspend_timeout_duration (Duration): "300s"
+    FieldMask uses camelCase (proto JSON standard):
+      spec.noSuspension, spec.suspendTimeoutDuration
+    update_mask is a URL query parameter per SDK update_endpoint().
     """
     try:
         w = _get_ws()
-        update_mask = "spec.no_suspension,spec.suspend_timeout_duration"
+        # FieldMask JSON format requires camelCase field names
+        update_mask = "spec.noSuspension,spec.suspendTimeoutDuration"
         resp = w.api_client.do(
             "PATCH",
             f"/api/2.0/postgres/{endpoint}?update_mask={update_mask}",
