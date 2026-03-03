@@ -712,6 +712,65 @@ def _resolve_branch(project: str, branch: str = "production") -> str:
     return f"{project_path}/branches/{branch}"
 
 
+def _resolve_parent_branch(project: str, preferred: str = "production") -> str:
+    """Resolve a parent branch name to a full resource path.
+
+    In Lakebase, the production branch has an auto-generated slug like
+    'br-cool-haze-d2hbxj2m' — there is no branch literally named 'production'.
+    This function resolves 'production' (and other logical names) to the actual
+    branch by listing all branches and applying priority rules:
+      1. Exact slug match (e.g. user typed the real slug directly)
+      2. display_name match (case-insensitive)
+      3. First branch with no expiry (permanent = production-equivalent)
+      4. First branch in the list
+      5. Fallback: build path from preferred name as-is (API will give clear error)
+    """
+    project_path = _resolve_project(project)
+    # If already a full path, use as-is
+    if preferred.startswith(project_path):
+        return preferred
+
+    try:
+        w = _get_ws()
+        resp = w.api_client.do("GET", f"/api/2.0/postgres/{project_path}/branches")
+        branches = resp.get("branches", [])
+
+        # 1. Exact slug match
+        for b in branches:
+            name = b.get("name", "")
+            slug = name.split("/branches/")[-1] if "/branches/" in name else ""
+            if slug == preferred:
+                logger.info("resolve_parent_branch: exact slug match '%s'", name)
+                return name
+
+        # 2. display_name match
+        for b in branches:
+            if b.get("display_name", "").lower() == preferred.lower():
+                logger.info("resolve_parent_branch: display_name match '%s' → %s", preferred, b["name"])
+                return b["name"]
+
+        # 3. First no-expiry branch (permanent branch = production equivalent)
+        for b in branches:
+            spec = b.get("spec") if isinstance(b.get("spec"), dict) else {}
+            no_expiry = spec.get("no_expiry") or b.get("no_expiry")
+            expire = b.get("expire_time") or b.get("expiry_time")
+            if no_expiry or not expire:
+                logger.info("resolve_parent_branch: '%s' not found; using permanent branch %s", preferred, b.get("name"))
+                return b.get("name", f"{project_path}/branches/{preferred}")
+
+        # 4. First branch in the list
+        if branches:
+            first = branches[0].get("name", "")
+            logger.info("resolve_parent_branch: '%s' not found; fallback to first branch %s", preferred, first)
+            return first
+
+    except Exception as e:
+        logger.warning("resolve_parent_branch: lookup failed: %s", e)
+
+    # 5. Build from preferred name — API will give a clear error
+    return f"{project_path}/branches/{preferred}"
+
+
 # ── MCP Server ───────────────────────────────────────────────────────
 
 mcp_server = Server("lakebase-mcp")
@@ -2416,7 +2475,7 @@ def _tool_create_branch(project: str, branch_id: str = "", parent_branch: str = 
     try:
         w = _get_ws()
         project_path = _resolve_project(project)
-        parent_path = _resolve_branch(project, parent_branch)
+        parent_path = _resolve_parent_branch(project, parent_branch)
 
         # branch_id goes as URL query param. Use user's input directly (e.g. "dev", "staging").
         raw_id = branch_id or display_name or "dev"
