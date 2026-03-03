@@ -2573,45 +2573,68 @@ def _tool_configure_scale_to_zero(endpoint: str, enabled: bool, idle_timeout_sec
         w = _get_ws()
         timeout_sec = int(idle_timeout_seconds)
 
-        # The body-based legacy format (same as configure_autoscaling) has "suspend_timeout_duration"
-        # as a valid top-level field on endpoint. "300s" string is parsed as zero/default (Duration
-        # proto JSON encoding not supported here). Try alternative value formats.
-
-        duration_formats = [
-            {"seconds": timeout_sec},   # protobuf Duration message format
-            timeout_sec,                 # plain integer seconds (like min_cu is a float)
-            f"{timeout_sec}s",           # proto JSON string (already confirmed failing, kept for log)
-        ]
+        # Step 1: GET the endpoint to log its full raw structure.
+        # This reveals what keys are present (name/spec/status/etc.) and what the
+        # current writable spec looks like, so we can derive the correct PATCH field paths.
+        try:
+            get_resp = w.api_client.do("GET", f"/api/2.0/postgres/{endpoint}")
+            logger.info("configure_scale_to_zero GET keys=%s  spec=%s  status=%s",
+                        list(get_resp.keys()),
+                        json.dumps(get_resp.get("spec"), default=str),
+                        json.dumps(get_resp.get("status"), default=str))
+            spec_from_get = get_resp.get("spec") or {}
+        except Exception as get_err:
+            logger.warning("configure_scale_to_zero GET failed: %s", get_err)
+            spec_from_get = {}
 
         if enabled:
-            for i, dur_val in enumerate(duration_formats):
-                body = {
-                    "endpoint": {
-                        "name": endpoint,
-                        "suspend_timeout_duration": dur_val,
-                    },
-                    "update_mask": "suspend_timeout_duration",
-                }
-                logger.info("configure_scale_to_zero attempt %d body: %s", i + 1, json.dumps(body, default=str))
-                try:
-                    resp = w.api_client.do("PATCH", f"/api/2.0/postgres/{endpoint}", body=body)
-                    logger.info("configure_scale_to_zero attempt %d success: %s", i + 1, json.dumps(resp, default=str))
-                    return [TextContent(type="text", text=json.dumps(resp, indent=2, default=str))]
-                except Exception as e_i:
-                    logger.warning("configure_scale_to_zero attempt %d failed (%s): %s", i + 1, type(dur_val).__name__, e_i)
-            return [TextContent(type="text", text=json.dumps({"error": "All duration format attempts failed — check logs for details"}, indent=2))]
+            # Build body using the spec from GET (preserves existing fields, adds timeout)
+            # Update_mask only covers suspend_timeout_duration + no_suspension
+            spec_body = {**spec_from_get, "endpoint_type": "ENDPOINT_TYPE_READ_WRITE",
+                         "suspend_timeout_duration": f"{timeout_sec}s"}
+            spec_body.pop("no_suspension", None)  # clear no_suspension to enable S2Z
+
+            attempts = [
+                # A: spec from GET merged with new timeout, body-based update_mask
+                ({"endpoint": {"name": endpoint, "spec": spec_body},
+                  "update_mask": "spec.suspend_timeout_duration,spec.no_suspension"}, None),
+                # B: autoscaling wrapper, update_mask using autoscaling paths
+                ({"endpoint": {"name": endpoint,
+                               "autoscaling": {"min_cu": spec_from_get.get("autoscaling_limit_min_cu", 0.5),
+                                               "max_cu": spec_from_get.get("autoscaling_limit_max_cu", 4.0),
+                                               "suspend_timeout_duration": f"{timeout_sec}s"}},
+                  "update_mask": "autoscaling.min_cu,autoscaling.max_cu,autoscaling.suspend_timeout_duration"}, None),
+                # C: flat spec body + URL param update_mask (snake_case)
+                ({"name": endpoint, "spec": spec_body}, "spec.suspend_timeout_duration"),
+            ]
         else:
-            body = {
-                "endpoint": {
-                    "name": endpoint,
-                    "no_suspension": True,
-                },
-                "update_mask": "no_suspension",
-            }
-            logger.info("configure_scale_to_zero disable body: %s", json.dumps(body))
-            resp = w.api_client.do("PATCH", f"/api/2.0/postgres/{endpoint}", body=body)
-            logger.info("configure_scale_to_zero disable success: %s", json.dumps(resp, default=str))
-            return [TextContent(type="text", text=json.dumps(resp, indent=2, default=str))]
+            attempts = [
+                # A: spec with no_suspension=True
+                ({"endpoint": {"name": endpoint, "spec": {**spec_from_get,
+                               "endpoint_type": "ENDPOINT_TYPE_READ_WRITE", "no_suspension": True}},
+                  "update_mask": "spec.no_suspension"}, None),
+                # B: autoscaling wrapper with confirmed working fields + no_suspension
+                ({"endpoint": {"name": endpoint,
+                               "autoscaling": {"min_cu": spec_from_get.get("autoscaling_limit_min_cu", 0.5),
+                                               "max_cu": spec_from_get.get("autoscaling_limit_max_cu", 4.0),
+                                               "no_suspension": True}},
+                  "update_mask": "autoscaling.min_cu,autoscaling.max_cu,autoscaling.no_suspension"}, None),
+            ]
+
+        for i, (body, query_mask) in enumerate(attempts):
+            kwargs = {"body": body}
+            if query_mask:
+                kwargs["query"] = {"update_mask": query_mask}
+            logger.info("configure_scale_to_zero attempt %d body=%s query_mask=%s",
+                        i + 1, json.dumps(body, default=str), query_mask)
+            try:
+                resp = w.api_client.do("PATCH", f"/api/2.0/postgres/{endpoint}", **kwargs)
+                logger.info("configure_scale_to_zero attempt %d success: %s", i + 1, json.dumps(resp, default=str))
+                return [TextContent(type="text", text=json.dumps(resp, indent=2, default=str))]
+            except Exception as e_i:
+                logger.warning("configure_scale_to_zero attempt %d failed: %s", i + 1, e_i)
+
+        return [TextContent(type="text", text=json.dumps({"error": "All attempts failed — check logs for full detail"}, indent=2))]
     except Exception as e:
         logger.error("configure_scale_to_zero failed for %s: %s", endpoint, e)
         return [TextContent(type="text", text=json.dumps({"error": str(e)}, indent=2))]
