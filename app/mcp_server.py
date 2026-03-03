@@ -2599,6 +2599,8 @@ def _tool_configure_scale_to_zero(endpoint: str, enabled: bool, idle_timeout_sec
 
         # GET current project state to read default_endpoint_settings
         project_resp = w.api_client.do("GET", f"/api/2.0/postgres/{project_path}")
+        logger.info("configure_scale_to_zero project GET keys=%s spec=%s",
+                    list(project_resp.keys()), project_resp.get("spec"))
         proj_spec = project_resp.get("spec") or {}
         default_settings = proj_spec.get("default_endpoint_settings") or {}
         current_timeout = default_settings.get("suspend_timeout_duration", "0s")
@@ -3835,6 +3837,17 @@ async def api_project_detail(request: Request):
         return JSONResponse({"error": str(e)}, status_code=400)
 
 
+async def api_project_raw(request: Request):
+    """Return the raw project GET response for debugging field paths."""
+    project_id = request.path_params["project_id"]
+    try:
+        w = _get_ws()
+        resp = w.api_client.do("GET", f"/api/2.0/postgres/{project_id}")
+        return JSONResponse(resp)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
 async def api_branches(request: Request):
     """List branches on a project."""
     project = request.query_params.get("project", "")
@@ -4173,6 +4186,7 @@ app = Starlette(
         Route("/api/explain", api_explain, methods=["POST"]),
         # REST API — infrastructure
         Route("/api/projects", api_projects, methods=["GET"]),
+        Route("/api/project-raw/{project_id:path}", api_project_raw, methods=["GET"]),
         Route("/api/projects/{project_id:path}", api_project_detail, methods=["GET"]),
         Route("/api/branches", api_branches, methods=["GET"]),
         Route("/api/branches/create", api_create_branch, methods=["POST"]),
