@@ -2476,21 +2476,27 @@ def _tool_configure_autoscaling(endpoint: str, min_cu: float, max_cu: float):
 
 
 def _tool_configure_scale_to_zero(endpoint: str, enabled: bool, idle_timeout_seconds: int = 300):
-    """Enable/disable scale-to-zero with idle timeout."""
+    """Enable/disable scale-to-zero (suspension) with idle timeout.
+
+    SDK field names (EndpointSpec):
+      spec.no_suspension (bool): True = scale-to-zero DISABLED, False = ENABLED
+      spec.suspend_timeout_duration (Duration string): e.g. "300s"
+    update_mask is a URL query parameter, not in the body.
+    """
     try:
         w = _get_ws()
-        resp = w.api_client.do("PATCH", f"/api/2.0/postgres/{endpoint}", body={
-            "endpoint": {
+        update_mask = "spec.no_suspension,spec.suspend_timeout_duration"
+        resp = w.api_client.do(
+            "PATCH",
+            f"/api/2.0/postgres/{endpoint}?update_mask={update_mask}",
+            body={
                 "name": endpoint,
-                "autoscaling": {
-                    "scale_to_zero": {
-                        "enabled": enabled,
-                        "idle_timeout_seconds": idle_timeout_seconds,
-                    },
+                "spec": {
+                    "no_suspension": not enabled,  # no_suspension=False → scale-to-zero ON
+                    "suspend_timeout_duration": f"{int(idle_timeout_seconds)}s",
                 },
             },
-            "update_mask": "autoscaling.scale_to_zero.enabled,autoscaling.scale_to_zero.idle_timeout_seconds",
-        })
+        )
         return [TextContent(type="text", text=json.dumps(resp, indent=2, default=str))]
     except Exception as e:
         return [TextContent(type="text", text=json.dumps({"error": str(e)}, indent=2))]
