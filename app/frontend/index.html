@@ -4359,6 +4359,16 @@ function stateLabel(state) {
   return state ? String(state).charAt(0).toUpperCase() + String(state).slice(1).toLowerCase() : 'Unknown';
 }
 
+// Format a Lakebase branch slug into a readable short name.
+// "br-cool-haze-d2hbxj2m" → "cool-haze"   "br-my-branch-abc123" → "my-branch"
+function formatBranchSlug(slug) {
+  if (!slug) return slug;
+  const s = slug.replace(/^br-/, '');
+  const parts = s.split('-');
+  // If 3+ parts, last part is the random suffix — drop it
+  return parts.length >= 3 ? parts.slice(0, -1).join('-') : s;
+}
+
 // ══════════════════════════════════════════════════════════════════════
 // NAVIGATION
 // ══════════════════════════════════════════════════════════════════════
@@ -4968,12 +4978,15 @@ async function loadProjects() {
       const isProvisioned = instanceType === 'provisioned';
       const rawName = p.name || p.id;
       const projectId = isAutoscaling && rawName.startsWith('projects/') ? rawName.replace('projects/', '') : rawName;
-      const displayName = escapeHtml(p.display_name || p.project_name || p.title || p.label || projectId);
+      // Autoscaling projects have no display_name in the API; show two first UUID segments (e.g. "99a2c711-6b51")
+      const shortId = projectId.includes('-') ? projectId.split('-').slice(0, 2).join('-') : projectId;
+      const displayName = escapeHtml(p.display_name || p.project_name || p.title || p.label || (isAutoscaling ? shortId : projectId));
       const clickHandler = (isProvisioned || isAutoscaling)
         ? `onclick="switchInstance('${escapeHtml(projectId)}')"`
         : '';
-      const clickTitle = (isProvisioned || isAutoscaling) ? 'title="Click to connect and explore"' : '';
+      const clickTitle = (isProvisioned || isAutoscaling) ? `title="${escapeHtml(projectId)}"` : '';
       const region = isAutoscaling && p.region ? `<div class="meta">Region: ${escapeHtml(p.region)}</div>` : '';
+      const createdFmt = p.create_time ? new Date(p.create_time).toLocaleDateString() : createdAt;
 
       return `<div class="mini-card" ${clickHandler} ${clickTitle} style="cursor:pointer">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
@@ -4984,9 +4997,9 @@ async function loadProjects() {
         ${capacity ? `<div class="meta">Capacity: ${escapeHtml(String(capacity).replace('CU_', '').replace('_', ' '))} CU</div>` : ''}
         ${dns ? `<div class="meta" style="font-family:var(--mono);font-size:10px;word-break:break-all;margin-top:4px">${escapeHtml(dns)}</div>` : ''}
         ${region}
-        ${createdAt ? `<div class="meta">Created: ${createdAt}</div>` : ''}
+        ${createdFmt ? `<div class="meta">Created: ${escapeHtml(createdFmt)}</div>` : ''}
         ${isProvisioned ? '<div class="meta" style="color:var(--neon-green);margin-top:6px;font-size:10px">Click to connect</div>' : ''}
-        ${isAutoscaling ? '<div class="meta" style="color:var(--text-secondary);margin-top:6px;font-size:10px">View branches &rarr;</div>' : ''}
+        ${isAutoscaling ? '<div class="meta" style="color:var(--neon-green);margin-top:6px;font-size:10px">Click to connect &rarr;</div>' : ''}
       </div>`;
     }).join('') + '</div>';
 
@@ -5006,7 +5019,9 @@ function populateProjectSelects() {
     sel.innerHTML = '<option value="">Select project...</option>' +
       projectsData.map(p => {
         const name = p.name || p.id;
-        const label = p.display_name || p.project_name || p.title || p.label || (name.startsWith('projects/') ? name.replace('projects/', '') : name);
+        const uuid = name.startsWith('projects/') ? name.replace('projects/', '') : name;
+        const shortId = uuid.includes('-') ? uuid.split('-').slice(0, 2).join('-') : uuid;
+        const label = p.display_name || p.project_name || p.title || p.label || (p.instance_type === 'autoscaling' ? shortId : uuid);
         return `<option value="${escapeHtml(name)}" ${name === current ? 'selected' : ''}>${escapeHtml(label)}</option>`;
       }).join('');
   });
@@ -5049,9 +5064,11 @@ async function loadBranches(project) {
         const state = b.state || b.status || 'unknown';
         const sc = stateClass(state);
         const branchKey = b.name || b.id;
-        const branchDisplay = b.display_name || (branchKey.includes('/branches/') ? branchKey.split('/branches/').pop() : branchKey);
+        const branchSlug = branchKey.includes('/branches/') ? branchKey.split('/branches/').pop() : branchKey;
+        const branchDisplay = b.display_name && b.display_name !== branchSlug ? b.display_name : formatBranchSlug(branchSlug);
         const parentRaw = b.parent_branch || b.parent || '--';
-        const parent = parentRaw !== '--' && parentRaw.includes('/branches/') ? parentRaw.split('/branches/').pop() : parentRaw;
+        const parentSlug = parentRaw !== '--' && parentRaw.includes('/branches/') ? parentRaw.split('/branches/').pop() : parentRaw;
+        const parent = parentSlug !== '--' ? formatBranchSlug(parentSlug) : '--';
         const created = b.created_at ? new Date(b.created_at).toLocaleString() : '--';
         return `<tr>
           <td><strong>${escapeHtml(branchDisplay)}</strong></td>
@@ -5149,7 +5166,7 @@ async function loadEndpoints(project, branch) {
       const sc = stateClass(state);
       const name = ep.name || ep.id;
       const host = ep.host || ep.hostname || '--';
-      const branchTag = ep._branch ? `<span class="badge badge-type" style="font-size:10px;margin-left:6px">${escapeHtml(ep._branch)}</span>` : '';
+      const branchTag = ep._branch ? `<span class="badge badge-type" style="font-size:10px;margin-left:6px">${escapeHtml(formatBranchSlug(ep._branch))}</span>` : '';
       const minCu = ep.min_cu || ep.autoscaling?.min_cu || '--';
       const maxCu = ep.max_cu || ep.autoscaling?.max_cu || '--';
       const stzEnabled = ep.scale_to_zero?.enabled ?? ep.autoscaling?.scale_to_zero_enabled ?? false;

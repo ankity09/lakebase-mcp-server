@@ -3515,7 +3515,9 @@ async def api_projects(request: Request):
         result = _tool_list_projects()
         data = json.loads(result[0].text)
         projects = data if isinstance(data, list) else []
-        # Enrich autoscaling projects with display_name from the describe endpoint
+        # Enrich autoscaling projects with state/region from the describe endpoint.
+        # NOTE: The Lakebase autoscaling projects API has no display_name field.
+        # Keys returned: name, uid, create_time, update_time, status
         w = _get_ws()
         for p in projects:
             if p.get("instance_type") == "autoscaling":
@@ -3524,16 +3526,17 @@ async def api_projects(request: Request):
                     try:
                         detail = w.api_client.do("GET", f"/api/2.0/postgres/{raw_name}")
                         if isinstance(detail, dict):
-                            logger.info("Project detail keys for %s: %s", raw_name, list(detail.keys()))
-                            # Merge all fields from detail into project
-                            for k, v in detail.items():
-                                if k not in p or not p[k]:
-                                    p[k] = v
-                            # Try common display name field names
-                            for field in ("display_name", "project_name", "title", "label", "human_name"):
-                                if detail.get(field):
-                                    p["display_name"] = detail[field]
-                                    break
+                            # Extract flat scalar fields
+                            for field in ("uid", "create_time", "update_time"):
+                                if detail.get(field) and field not in p:
+                                    p[field] = detail[field]
+                            # Extract state and region from nested status object
+                            status_obj = detail.get("status", {})
+                            if isinstance(status_obj, dict):
+                                if status_obj.get("state"):
+                                    p["state"] = status_obj["state"]
+                                if status_obj.get("region"):
+                                    p["region"] = status_obj["region"]
                     except Exception as e:
                         logger.warning("Failed to enrich project %s: %s", raw_name, e)
         return JSONResponse(projects)
@@ -3558,7 +3561,10 @@ async def api_branches(request: Request):
         return JSONResponse({"error": "project query parameter required"}, status_code=400)
     try:
         result = _tool_list_branches(project)
-        return JSONResponse(json.loads(result[0].text))
+        branches = json.loads(result[0].text)
+        if isinstance(branches, list) and branches:
+            logger.info("Branch keys sample: %s", list(branches[0].keys()) if isinstance(branches[0], dict) else type(branches[0]))
+        return JSONResponse(branches)
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=400)
 
