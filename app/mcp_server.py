@@ -2560,42 +2560,72 @@ def _tool_configure_autoscaling(endpoint: str, min_cu: float, max_cu: float):
 def _tool_configure_scale_to_zero(endpoint: str, enabled: bool, idle_timeout_seconds: int = 300):
     """Enable/disable scale-to-zero (suspension) with idle timeout.
 
-    SDK format (from update_endpoint source):
-    - update_mask → URL query param, camelCase field names (FieldMask.ToJsonString())
-    - body → flat dict: {"name": ..., "spec": {...}} (snake_case keys, NO envelope wrapper)
-    - w.api_client.do() accepts query= kwarg for URL query params
+    The Databricks Lakebase PATCH API supports two body formats:
+    1. Legacy body-based: {"endpoint": {"autoscaling": {min_cu, max_cu}}, "update_mask": "autoscaling.*"}
+       - Only works for autoscaling fields (min_cu / max_cu), NOT scale-to-zero fields.
+    2. SDK flat body + URL query param: {"name": ..., "spec": {...}}, ?update_mask=spec.*
+       - spec.* URL params rejected as "Unknown field path" by this workspace's API version.
 
-    Enable:  update_mask=spec.suspendTimeoutDuration, body spec.suspend_timeout_duration
-    Disable: update_mask=spec.noSuspension,           body spec.no_suspension = True
+    Diagnostic strategy: try both legacy-style (fields directly on endpoint object) and
+    the SDK flat-body approach, log each attempt so we can see which format the server accepts.
     """
     try:
         w = _get_ws()
+        timeout_str = f"{int(idle_timeout_seconds)}s"
+
+        # Attempt A: fields directly on the endpoint object (not nested under autoscaling/spec)
+        # This mirrors how autoscaling.min_cu works but at the top level of endpoint
         if enabled:
-            body = {
+            body_a = {
+                "endpoint": {
+                    "name": endpoint,
+                    "suspend_timeout_duration": timeout_str,
+                },
+                "update_mask": "suspend_timeout_duration",
+            }
+        else:
+            body_a = {
+                "endpoint": {
+                    "name": endpoint,
+                    "no_suspension": True,
+                },
+                "update_mask": "no_suspension",
+            }
+        logger.info("configure_scale_to_zero attempt A body: %s", json.dumps(body_a))
+        try:
+            resp = w.api_client.do("PATCH", f"/api/2.0/postgres/{endpoint}", body=body_a)
+            logger.info("configure_scale_to_zero attempt A success: %s", json.dumps(resp, default=str))
+            return [TextContent(type="text", text=json.dumps(resp, indent=2, default=str))]
+        except Exception as e_a:
+            logger.warning("configure_scale_to_zero attempt A failed: %s", e_a)
+
+        # Attempt B: flat body (no envelope) + snake_case URL param
+        if enabled:
+            body_b = {
                 "name": endpoint,
                 "spec": {
                     "endpoint_type": "ENDPOINT_TYPE_READ_WRITE",
-                    "suspend_timeout_duration": f"{int(idle_timeout_seconds)}s",
+                    "suspend_timeout_duration": timeout_str,
                 },
             }
-            update_mask = "spec.suspendTimeoutDuration"
+            mask_b = "spec.suspend_timeout_duration"
         else:
-            body = {
+            body_b = {
                 "name": endpoint,
                 "spec": {
                     "endpoint_type": "ENDPOINT_TYPE_READ_WRITE",
                     "no_suspension": True,
                 },
             }
-            update_mask = "spec.noSuspension"
-        logger.info("configure_scale_to_zero PATCH body: %s  update_mask: %s", json.dumps(body), update_mask)
+            mask_b = "spec.no_suspension"
+        logger.info("configure_scale_to_zero attempt B body: %s  update_mask: %s", json.dumps(body_b), mask_b)
         resp = w.api_client.do(
             "PATCH",
             f"/api/2.0/postgres/{endpoint}",
-            body=body,
-            query={"update_mask": update_mask},
+            body=body_b,
+            query={"update_mask": mask_b},
         )
-        logger.info("configure_scale_to_zero PATCH response: %s", json.dumps(resp, default=str))
+        logger.info("configure_scale_to_zero attempt B success: %s", json.dumps(resp, default=str))
         return [TextContent(type="text", text=json.dumps(resp, indent=2, default=str))]
     except Exception as e:
         logger.error("configure_scale_to_zero failed for %s: %s", endpoint, e)
