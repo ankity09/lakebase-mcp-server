@@ -77,17 +77,20 @@ command:
   - mcp_server.py
 
 env:
+  - name: LAKEBASE_PROJECT_NAME
+    value: "Manufacturing EPL"                       # human-readable label shown in the UI
   - name: LAKEBASE_PROJECT
-    value: "b10eb92b-dc0e-4ccf-ba26-0653c5e7ebec"   # project UUID (from Lakebase project URL)
+    value: "b10eb92b-dc0e-4ccf-ba26-0653c5e7ebec"   # project ID (UUID from Lakebase project URL)
   - name: LAKEBASE_BRANCH
-    value: "br-cool-haze-d2hbxj2m"                  # branch ID (from branch overview page)
+    value: "br-cool-haze-d2hbxj2m"                  # branch ID (from branch overview page, NOT the display name)
   - name: LAKEBASE_DATABASE
     value: "databricks_postgres"                     # optional, default: databricks_postgres
 ```
 
 **Finding the values:**
+- `LAKEBASE_PROJECT_NAME`: Any human-readable label you want shown in the web UI (e.g. `"Manufacturing EPL"`, `"Supply Chain Demo"`)
 - `LAKEBASE_PROJECT`: In Databricks → Lakebase → click your project → the UUID is in the page URL or shown in the branch overview breadcrumb
-- `LAKEBASE_BRANCH`: In Databricks → Lakebase → your project → click the branch → **ID** field on the branch overview (looks like `br-cool-haze-d2hbxj2m`)
+- `LAKEBASE_BRANCH`: In Databricks → Lakebase → your project → click the branch → **ID** field on the branch overview (looks like `br-cool-haze-d2hbxj2m`). This is **not** the display name.
 - `LAKEBASE_ENDPOINT` is not needed — the server auto-discovers the first active endpoint on the branch
 
 ## MCP Tools (34)
@@ -281,10 +284,12 @@ The SQL looks like:
 CREATE ROLE "<app-sp-uuid>" WITH LOGIN;
 SECURITY LABEL FOR databricks_auth ON ROLE "<app-sp-uuid>"
   IS 'id=<integer-scim-id>,type=service_principal';
-GRANT ALL ON DATABASE <database> TO "<app-sp-uuid>";
+GRANT ALL ON DATABASE "<database>" TO "<app-sp-uuid>";
 GRANT ALL ON ALL TABLES IN SCHEMA public TO "<app-sp-uuid>";
 GRANT USAGE ON SCHEMA public TO "<app-sp-uuid>";
 ```
+
+> **Who can run this SQL?** `CREATE ROLE` and `SECURITY LABEL` require **PostgreSQL superuser** privileges. In Databricks Lakebase, the workspace admin or the user who created the Lakebase project has superuser access. Run the SQL while logged in as that user — in the Lakebase UI "Edit data" editor, your own credentials (email) are used, so you must be the project owner or a workspace admin. Regular workspace users cannot run these statements.
 
 **Step 6: Verify**
 
@@ -346,6 +351,8 @@ Then follow Step 5 (Lakebase access) and Step 6 (verify) from Option A above.
 10. **Autoscaling branch ID vs display name:** `LAKEBASE_BRANCH` must be the branch **ID** (e.g. `br-cool-haze-d2hbxj2m`), not the display name (e.g. `production`). Find the ID in Databricks → Lakebase → your project → click the branch → **ID** field.
 11. **Autoscaling OAuth role — integer SCIM ID required:** The PostgreSQL security label requires the SP's integer SCIM ID (`id=<int64>`), **not** the UUID application ID. Use `GET /api/setup-role-sql` to auto-generate the correct SQL with the SCIM ID pre-filled, instead of looking it up manually.
 12. **Autoscaling credential generation:** The server uses `POST /api/2.0/postgres/credentials` (REST) for token generation. The `w.postgres.*` SDK methods fail in deployed environments; the server handles this internally via `w.api_client.do()`.
+13. **Autoscaling project names:** The Lakebase autoscaling API does not return human-readable project names — only UUIDs. Set `LAKEBASE_PROJECT_NAME` in `app.yaml` to display a friendly name in the web UI.
+14. **OAuth role requires superuser:** `CREATE ROLE` and `SECURITY LABEL` require PostgreSQL superuser. In Lakebase, only the workspace admin or the project owner has superuser access. Run the setup SQL in the Lakebase UI while logged in as that user.
 
 ## Local Development
 

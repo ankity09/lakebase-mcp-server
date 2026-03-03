@@ -2,6 +2,23 @@ command:
   - python
   - mcp_server.py
 
+# ── Autoscaling Lakebase (Neon-based) ────────────────────────────────
+# Use this block instead of `resources:` for autoscaling Lakebase instances.
+# Remove or comment out the `resources:` block below when using autoscaling.
+#
+# env:
+#   - name: LAKEBASE_PROJECT_NAME
+#     value: "My Project"             # Human-readable label shown in the UI
+#   - name: LAKEBASE_PROJECT
+#     value: "99a2c711-..."           # Project ID (UUID from Lakebase project URL)
+#   - name: LAKEBASE_BRANCH
+#     value: "br-cool-haze-d2hbxj2m" # Branch ID (from branch overview page, NOT the display name)
+#   - name: LAKEBASE_DATABASE
+#     value: "my_database"            # Database name (default: databricks_postgres)
+
+# ── Provisioned Lakebase ─────────────────────────────────────────────
+# Use this block for standard provisioned Lakebase instances.
+# Remove or comment out the `env:` block above when using provisioned.
 resources:
   - name: database
     database:

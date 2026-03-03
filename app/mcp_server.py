@@ -3517,19 +3517,21 @@ async def api_projects(request: Request):
         projects = data if isinstance(data, list) else []
         # Enrich autoscaling projects with state/region from the describe endpoint.
         # Keys returned: name, uid, create_time, update_time, status
+        # LAKEBASE_PROJECT_NAME env var provides a human-readable name for the configured project.
+        configured_project = os.environ.get("LAKEBASE_PROJECT", "")
+        project_name_env = os.environ.get("LAKEBASE_PROJECT_NAME", "")
         w = _get_ws()
         for p in projects:
             if p.get("instance_type") == "autoscaling":
                 raw_name = p.get("name", "")
                 if raw_name.startswith("projects/"):
+                    project_uuid = raw_name.replace("projects/", "")
+                    # Apply user-supplied name for the configured project
+                    if project_name_env and project_uuid == configured_project:
+                        p["display_name"] = project_name_env
                     try:
                         detail = w.api_client.do("GET", f"/api/2.0/postgres/{raw_name}")
                         if isinstance(detail, dict):
-                            describe_name = detail.get("name", "")
-                            logger.info("Project describe: name=%r uid=%r for %s", describe_name, detail.get("uid"), raw_name)
-                            # If describe name differs from resource path, it's a human-readable name
-                            if describe_name and describe_name != raw_name and not describe_name.startswith("projects/"):
-                                p["display_name"] = describe_name
                             # Extract flat scalar fields
                             for field in ("uid", "create_time", "update_time"):
                                 if detail.get(field) and field not in p:
