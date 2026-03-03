@@ -2478,31 +2478,43 @@ def _tool_configure_autoscaling(endpoint: str, min_cu: float, max_cu: float):
 def _tool_configure_scale_to_zero(endpoint: str, enabled: bool, idle_timeout_seconds: int = 300):
     """Enable/disable scale-to-zero (suspension) with idle timeout.
 
-    SDK EndpointSpec fields (snake_case in body):
-      spec.no_suspension (bool): True = scale-to-zero DISABLED, False = ENABLED
-      spec.suspend_timeout_duration (Duration): "300s"
-    FieldMask uses camelCase (proto JSON standard):
-      spec.noSuspension, spec.suspendTimeoutDuration
-    update_mask is a URL query parameter per SDK update_endpoint().
+    Uses the same body-based update_mask format as configure_autoscaling (which works).
+    The API expects: {"endpoint": {...}, "update_mask": "..."} with update_mask in the body.
+    scale-to-zero fields live under autoscaling.scale_to_zero in the old-style API.
     """
     try:
         w = _get_ws()
-        # FieldMask JSON format requires camelCase field names
-        update_mask = "spec.noSuspension,spec.suspendTimeoutDuration"
-        resp = w.api_client.do(
-            "PATCH",
-            f"/api/2.0/postgres/{endpoint}?update_mask={update_mask}",
-            body={
+        # First GET to capture the actual endpoint structure for diagnostics if PATCH fails
+        get_resp = {}
+        try:
+            get_resp = w.api_client.do("GET", f"/api/2.0/postgres/{endpoint}")
+        except Exception:
+            pass
+
+        # Mirror the working configure_autoscaling pattern: update_mask in body, endpoint wrapper
+        resp = w.api_client.do("PATCH", f"/api/2.0/postgres/{endpoint}", body={
+            "endpoint": {
                 "name": endpoint,
-                "spec": {
-                    "no_suspension": not enabled,  # no_suspension=False → scale-to-zero ON
-                    "suspend_timeout_duration": f"{int(idle_timeout_seconds)}s",
+                "autoscaling": {
+                    "scale_to_zero": {
+                        "enabled": enabled,
+                        "idle_timeout_seconds": int(idle_timeout_seconds),
+                    },
                 },
             },
-        )
+            "update_mask": "autoscaling.scale_to_zero.enabled,autoscaling.scale_to_zero.idle_timeout_seconds",
+        })
         return [TextContent(type="text", text=json.dumps(resp, indent=2, default=str))]
     except Exception as e:
-        return [TextContent(type="text", text=json.dumps({"error": str(e)}, indent=2))]
+        # Include the actual endpoint structure so we can see the real field names
+        diag = {
+            "error": str(e),
+            "endpoint_structure": {
+                k: v for k, v in (get_resp or {}).items()
+                if k in ("spec", "autoscaling", "status", "name", "endpoint_type")
+            },
+        }
+        return [TextContent(type="text", text=json.dumps(diag, indent=2, default=str))]
 
 
 # ── Tool implementations (Data quality) ──────────────────────────────

@@ -3152,9 +3152,10 @@
             </div>
             <div class="form-group">
               <label>Parent Branch</label>
-              <select id="newBranchParent">
-                <option value="">Select a project first</option>
-              </select>
+              <input id="newBranchParent" list="parentBranchList" placeholder="production" value="production">
+              <datalist id="parentBranchList">
+                <option value="production">
+              </datalist>
             </div>
           </div>
           <div style="display:flex; gap:8px;">
@@ -5115,28 +5116,24 @@ function showCreateBranch() {
 }
 
 async function loadParentBranchOptions(project) {
-  const sel = document.getElementById('newBranchParent');
-  if (!sel) return;
-  if (!project) {
-    sel.innerHTML = '<option value="">Select a project first</option>';
-    return;
-  }
-  sel.innerHTML = '<option value="">Loading branches...</option>';
+  // Populates datalist suggestions; input still allows typing any branch name (e.g. "production")
+  const dl = document.getElementById('parentBranchList');
+  if (!dl || !project) return;
   try {
     const data = await api(`/api/branches?project=${encodeURIComponent(project)}`);
     const branches = Array.isArray(data) ? data : (data.branches || []);
-    if (!branches.length) {
-      sel.innerHTML = '<option value="">No branches found</option>';
-      return;
-    }
-    sel.innerHTML = branches.map(b => {
+    // Always include "production" as a suggestion (it's the default root branch)
+    const options = new Map([['production', 'production']]);
+    branches.forEach(b => {
       const key = b.name || b.id;
       const slug = key.includes('/branches/') ? key.split('/branches/').pop() : key;
-      const label = b.display_name || formatBranchSlug(slug);
-      return `<option value="${escapeHtml(slug)}">${escapeHtml(label)}</option>`;
-    }).join('');
+      options.set(slug, b.display_name || formatBranchSlug(slug));
+    });
+    dl.innerHTML = [...options.entries()].map(
+      ([slug, label]) => `<option value="${escapeHtml(slug)}" label="${escapeHtml(label)}">`
+    ).join('');
   } catch (e) {
-    sel.innerHTML = '<option value="">Error loading branches</option>';
+    // Leave datalist with just "production" — user can still type freely
   }
 }
 
