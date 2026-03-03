@@ -2400,31 +2400,33 @@ def _tool_get_endpoint_status(endpoint: str):
 
 
 def _tool_create_branch(project: str, branch_id: str = "", parent_branch: str = "production", display_name: str = ""):
-    """Create a new branch. branch_id is the resource slug (required by API); display_name is optional human label."""
+    """Create a new branch.
+
+    branch_id is a URL query parameter — user-provided slug like 'dev' or 'staging'.
+    The Databricks API requires spec.source_branch (not parent_branch in body).
+    """
     try:
         w = _get_ws()
         project_path = _resolve_project(project)
         parent_path = _resolve_branch(project, parent_branch)
 
-        # branch_id is required by the Databricks API and must start with "br-".
-        # If not explicitly provided, auto-generate from display_name.
-        effective_branch_id = branch_id
-        if not effective_branch_id:
-            slug_source = display_name or "dev"
-            slug = re.sub(r'[^a-z0-9]+', '-', slug_source.lower()).strip('-')
-            slug = slug or "dev"
-            # Databricks branch IDs must start with "br-"
-            effective_branch_id = f"br-{slug}" if not slug.startswith("br-") else slug
+        # branch_id goes as URL query param. Use user's input directly (e.g. "dev", "staging").
+        raw_id = branch_id or display_name or "dev"
+        effective_branch_id = re.sub(r'[^a-z0-9]+', '-', raw_id.lower()).strip('-') or "dev"
 
-        branch_body: dict = {
-            "parent_branch": parent_path,
-            "branch_id": effective_branch_id,
+        body: dict = {
+            "spec": {
+                "source_branch": parent_path,
+                "no_expiry": True,
+            },
         }
         if display_name:
-            branch_body["display_name"] = display_name
-        resp = w.api_client.do("POST", f"/api/2.0/postgres/{project_path}/branches", body={
-            "branch": branch_body,
-        })
+            body["display_name"] = display_name
+        resp = w.api_client.do(
+            "POST",
+            f"/api/2.0/postgres/{project_path}/branches?branch_id={effective_branch_id}",
+            body=body,
+        )
         return [TextContent(type="text", text=json.dumps(resp, indent=2, default=str))]
     except Exception as e:
         return [TextContent(type="text", text=json.dumps({"error": str(e)}, indent=2))]

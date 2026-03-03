@@ -5114,7 +5114,7 @@ async function createBranch() {
   try {
     const resp = await api('/api/branches/create', {
       method: 'POST',
-      body: JSON.stringify({ project, display_name: branchId, parent_branch: parent || 'production' }),
+      body: JSON.stringify({ project, branch_id: branchId, display_name: branchId, parent_branch: parent || 'production' }),
     });
     resultDiv.innerHTML = `<div class="result success"><pre><code>${escapeHtml(JSON.stringify(resp, null, 2))}</code></pre></div>`;
     showToast(`Branch "${branchId}" created successfully`, 'success');
