@@ -243,13 +243,28 @@ databricks apps deploy lakebase-mcp-server \
 databricks api patch /api/2.0/permissions/apps/lakebase-mcp-server \
   --json '{"access_control_list":[{"group_name":"users","permission_level":"CAN_USE"}]}' \
   --profile=<PROFILE>
+```
 
-# Grant Lakebase table access to app SP
+**Provisioned Lakebase only** — grant table access to app SP via psql:
+```bash
 databricks psql my-instance --profile=<PROFILE> -- -d my_database -c "
 GRANT ALL ON ALL TABLES IN SCHEMA public TO \"<app-sp-client-id>\";
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO \"<app-sp-client-id>\";
 "
 ```
+
+**Autoscaling Lakebase only** — the app SP needs an OAuth PostgreSQL role. The UI only supports password-based roles; OAuth roles must be created via SQL. Get the app SP client ID from the app's Authorization tab, then run this SQL in the Lakebase UI (branch → Roles & Databases → Edit data):
+
+```sql
+CREATE ROLE "<app-sp-client-id>" WITH LOGIN;
+SECURITY LABEL FOR databricks_auth ON ROLE "<app-sp-client-id>"
+  IS 'type=service_principal,application_id=<app-sp-client-id>';
+GRANT ALL ON DATABASE <database_name> TO "<app-sp-client-id>";
+GRANT ALL ON ALL TABLES IN SCHEMA public TO "<app-sp-client-id>";
+GRANT USAGE ON SCHEMA public TO "<app-sp-client-id>";
+```
+
+> **How to find the app SP client ID:** In the Databricks UI, go to Apps → your app → **Authorization** tab. The service principal client ID is shown there (a UUID like `eec1e9bf-...`).
 
 ### Step 5: Verify
 
