@@ -2589,26 +2589,28 @@ def _tool_configure_scale_to_zero(endpoint: str, enabled: bool, idle_timeout_sec
                     current_timeout, current_no_suspension)
 
         # Return success if already at desired state
-        if enabled and current_timeout == desired_timeout_str and not current_no_suspension:
+        if enabled and current_timeout == desired_timeout_str:
             return [TextContent(type="text", text=json.dumps({
                 "status": "already_enabled",
                 "suspend_timeout_duration": current_timeout,
                 "message": f"Scale-to-zero already enabled with {current_timeout} timeout",
             }, indent=2))]
-        if not enabled and current_no_suspension:
+        if not enabled and (current_no_suspension or current_timeout in ("0s", "0", "")):
             return [TextContent(type="text", text=json.dumps({
                 "status": "already_disabled",
-                "message": "Scale-to-zero already disabled",
+                "message": "Scale-to-zero already disabled (no suspend timeout configured)",
             }, indent=2))]
 
-        # SDK-canonical format: spec body + snake_case update_mask URL param
-        # (FieldMask.ToJsonString joins paths with commas, no camelCase conversion)
+        # SDK-canonical format: spec body + snake_case update_mask URL param.
+        # spec.no_suspension is confirmed "Unknown field path" on this workspace.
+        # Use suspend_timeout_duration for both enable (set to Ns) and disable (set to 0s).
+        # 0s = "no timeout configured" which means the endpoint won't auto-suspend.
         if enabled:
-            spec_body = {"suspend_timeout_duration": desired_timeout_str, "no_suspension": False}
-            update_mask = "spec.suspend_timeout_duration,spec.no_suspension"
+            spec_body = {"suspend_timeout_duration": desired_timeout_str}
+            update_mask = "spec.suspend_timeout_duration"
         else:
-            spec_body = {"no_suspension": True}
-            update_mask = "spec.no_suspension"
+            spec_body = {"suspend_timeout_duration": "0s"}
+            update_mask = "spec.suspend_timeout_duration"
 
         logger.info("configure_scale_to_zero PATCH: endpoint=%s mask=%s spec=%s",
                     endpoint, update_mask, spec_body)
