@@ -3607,6 +3607,48 @@ async def api_endpoint_config(request: Request):
         return JSONResponse({"error": str(e)}, status_code=400)
 
 
+async def api_setup_role_sql(request: Request):
+    """Generate the SQL needed to create an OAuth role for the app's service principal."""
+    try:
+        w = _get_ws()
+        me = w.current_user.me()
+        user_name = me.user_name  # SP application UUID for M2M auth
+
+        # Look up integer SCIM ID via SCIM API
+        scim_resp = w.api_client.do(
+            "GET",
+            f"/api/2.0/preview/scim/v2/ServicePrincipals?filter=applicationId+eq+{user_name}",
+        )
+        resources = scim_resp.get("Resources", [])
+        scim_id = str(resources[0]["id"]) if resources else None
+
+        if not scim_id:
+            return JSONResponse(
+                {"error": f"Could not find SCIM ID for SP '{user_name}'. Is this a service principal?"},
+                status_code=404,
+            )
+
+        database = os.environ.get("LAKEBASE_DATABASE", os.environ.get("PGDATABASE", "databricks_postgres"))
+
+        sql = (
+            f'CREATE ROLE "{user_name}" WITH LOGIN;\n'
+            f'SECURITY LABEL FOR databricks_auth ON ROLE "{user_name}"\n'
+            f"  IS 'id={scim_id},type=service_principal';\n"
+            f'GRANT ALL ON DATABASE {database} TO "{user_name}";\n'
+            f'GRANT ALL ON ALL TABLES IN SCHEMA public TO "{user_name}";\n'
+            f'GRANT USAGE ON SCHEMA public TO "{user_name}";'
+        )
+
+        return JSONResponse({
+            "sp_client_id": user_name,
+            "sp_scim_id": scim_id,
+            "database": database,
+            "sql": sql,
+        })
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 async def api_profile_table(request: Request):
     """Profile a table."""
     table_name = request.path_params["table_name"]
@@ -3771,6 +3813,7 @@ app = Starlette(
         Route("/api/endpoints", api_endpoints, methods=["GET"]),
         Route("/api/endpoints/{endpoint_name:path}/config", api_endpoint_config, methods=["PATCH"]),
         Route("/api/profile/{table_name}", api_profile_table, methods=["GET"]),
+        Route("/api/setup-role-sql", api_setup_role_sql, methods=["GET"]),
         # Health & MCP
         Route("/health", health, methods=["GET"]),
         # Multi-database MCP routing: /db/{database}/mcp/

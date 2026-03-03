@@ -69,21 +69,26 @@ resources:
 ```
 
 ### Autoscaling
-Set `LAKEBASE_PROJECT` as an env var. The server auto-discovers the endpoint, generates credentials, and refreshes tokens every 50 minutes.
+Set `LAKEBASE_PROJECT` as an env var. The server auto-discovers the endpoint, generates credentials, and refreshes tokens every 50 minutes. No `resources:` block needed.
 
 ```yaml
+command:
+  - python
+  - mcp_server.py
+
 env:
   - name: LAKEBASE_PROJECT
-    value: "my-project"
+    value: "b10eb92b-dc0e-4ccf-ba26-0653c5e7ebec"   # project UUID (from Lakebase project URL)
   - name: LAKEBASE_BRANCH
-    value: "production"          # optional, default: production
+    value: "br-cool-haze-d2hbxj2m"                  # branch ID (from branch overview page)
   - name: LAKEBASE_DATABASE
-    value: "my_db"               # optional, default: databricks_postgres
-  - name: LAKEBASE_ENDPOINT
-    value: "ep-primary"          # optional, auto-discovered if omitted
+    value: "databricks_postgres"                     # optional, default: databricks_postgres
 ```
 
-No database resource needed — the server handles everything including endpoint discovery and token refresh.
+**Finding the values:**
+- `LAKEBASE_PROJECT`: In Databricks → Lakebase → click your project → the UUID is in the page URL or shown in the branch overview breadcrumb
+- `LAKEBASE_BRANCH`: In Databricks → Lakebase → your project → click the branch → **ID** field on the branch overview (looks like `br-cool-haze-d2hbxj2m`)
+- `LAKEBASE_ENDPOINT` is not needed — the server auto-discovers the first active endpoint on the branch
 
 ## MCP Tools (34)
 
@@ -170,6 +175,7 @@ All tools include MCP annotations (`readOnlyHint`, `destructiveHint`, `idempoten
 | `/api/endpoints` | GET | List endpoints (?project=...&branch=...) |
 | `/api/endpoints/{name}/config` | PATCH | Configure autoscaling/scale-to-zero |
 | `/api/profile/{table}` | GET | Profile a table (column-level stats) |
+| `/api/setup-role-sql` | GET | Generate OAuth role SQL for the app SP (autoscaling only) |
 
 ## Web UI
 
@@ -197,15 +203,27 @@ Infrastructure tools use the `w.postgres.*` SDK methods and require autoscaling 
 
 ## Reuse Across Demos
 
-Change the `instance_name` and `database_name` in `app/app.yaml`:
+**Provisioned:** Change `instance_name` and `database_name` in `app/app.yaml`:
 
 ```yaml
 resources:
   - name: database
     database:
       instance_name: my-instance      # change per demo
-      database_name: my_database       # change per demo
+      database_name: my_database      # change per demo
       permission: CAN_CONNECT_AND_CREATE
+```
+
+**Autoscaling:** Change the env vars in `app/app.yaml`:
+
+```yaml
+env:
+  - name: LAKEBASE_PROJECT
+    value: "b10eb92b-dc0e-4ccf-ba26-0653c5e7ebec"  # your project UUID
+  - name: LAKEBASE_BRANCH
+    value: "br-cool-haze-d2hbxj2m"                 # your branch ID
+  - name: LAKEBASE_DATABASE
+    value: "my_database"
 ```
 
 No code changes needed. The UI and tools work with any Lakebase database.
@@ -213,75 +231,91 @@ No code changes needed. The UI and tools work with any Lakebase database.
 ## Deployment
 
 ### Prerequisites
-- Databricks CLI configured with workspace profile
-- A Lakebase instance already created
 
-### Step 1: Create the app
+- A Lakebase instance already created in your workspace
+- Code pushed to GitHub (or another location accessible from the workspace file browser)
 
+### Option A: Deploy via the Databricks UI (recommended)
+
+**Step 1: Upload code to workspace**
+
+In the Databricks UI, go to **Workspace** and navigate to your user folder. Upload the `app/` directory (or clone the repo via Git in the workspace file browser).
+
+**Step 2: Configure app.yaml**
+
+Edit `app/app.yaml` with your Lakebase details (see [Reuse Across Demos](#reuse-across-demos) above). Use provisioned mode for named databases or autoscaling mode for Neon-based instances.
+
+**Step 3: Create and deploy the app**
+
+1. In the Databricks UI, go to **Apps** → **Create App**
+2. Select **Custom** → point to your `app/` directory in the workspace
+3. Click **Deploy**
+
+**Step 4: Grant app permissions**
+
+In Apps → your app → **Permissions** tab:
+- Add **All workspace users** → `Can Use` (required for MAS MCP proxy)
+
+**Step 5: Grant Lakebase access to the app SP**
+
+The app runs as an auto-created service principal. Find its UUID in Apps → your app → **Authorization** tab.
+
+*Provisioned Lakebase:*
 ```bash
-databricks apps create lakebase-mcp-server --profile=<PROFILE>
-```
-
-### Step 2: Sync code to workspace
-
-```bash
-databricks sync ./app /Workspace/Users/<email>/lakebase-mcp-server/app --profile=<PROFILE> --watch=false
-```
-
-### Step 3: Deploy
-
-```bash
-databricks apps deploy lakebase-mcp-server \
-  --source-code-path /Workspace/Users/<email>/lakebase-mcp-server/app \
-  --profile=<PROFILE>
-```
-
-### Step 4: Grant permissions
-
-```bash
-# Grant CAN_USE to users group (required for MAS MCP proxy)
-databricks api patch /api/2.0/permissions/apps/lakebase-mcp-server \
-  --json '{"access_control_list":[{"group_name":"users","permission_level":"CAN_USE"}]}' \
-  --profile=<PROFILE>
-```
-
-**Provisioned Lakebase only** — grant table access to app SP via psql:
-```bash
-databricks psql my-instance --profile=<PROFILE> -- -d my_database -c "
+databricks psql <instance-name> --profile=<PROFILE> -- -d <database_name> -c "
 GRANT ALL ON ALL TABLES IN SCHEMA public TO \"<app-sp-client-id>\";
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO \"<app-sp-client-id>\";
 "
 ```
 
-**Autoscaling Lakebase only** — the app SP needs an OAuth PostgreSQL role. The UI only supports password-based roles; OAuth roles must be created via SQL. Get the app SP client ID from the app's Authorization tab, then run this SQL in the Lakebase UI (branch → Roles & Databases → Edit data):
+*Autoscaling Lakebase:* The app SP needs an OAuth PostgreSQL role. After the app is running, use the built-in helper to generate the exact SQL:
 
-First, find the app SP's **integer SCIM ID** (not the UUID application ID):
-```bash
-databricks api get "/api/2.0/preview/scim/v2/ServicePrincipals?filter=applicationId+eq+<app-sp-client-id>" --profile=<PROFILE>
-# Look for the "id" field in the response — it's a large integer like 1234567890123456
+```
+GET https://<app-url>/api/setup-role-sql
 ```
 
-Then run this SQL in the Lakebase UI (branch → Roles & Databases → Edit data):
+This returns ready-to-run SQL with the correct integer SCIM ID pre-filled. Copy the SQL from the response and run it in the Lakebase UI: branch → **Roles & Databases** → **Edit data** (the SQL editor).
+
+The SQL looks like:
 ```sql
-CREATE ROLE "<app-sp-client-id>" WITH LOGIN;
-SECURITY LABEL FOR databricks_auth ON ROLE "<app-sp-client-id>"
+CREATE ROLE "<app-sp-uuid>" WITH LOGIN;
+SECURITY LABEL FOR databricks_auth ON ROLE "<app-sp-uuid>"
   IS 'id=<integer-scim-id>,type=service_principal';
-GRANT ALL ON DATABASE <database_name> TO "<app-sp-client-id>";
-GRANT ALL ON ALL TABLES IN SCHEMA public TO "<app-sp-client-id>";
-GRANT USAGE ON SCHEMA public TO "<app-sp-client-id>";
+GRANT ALL ON DATABASE <database> TO "<app-sp-uuid>";
+GRANT ALL ON ALL TABLES IN SCHEMA public TO "<app-sp-uuid>";
+GRANT USAGE ON SCHEMA public TO "<app-sp-uuid>";
 ```
 
-> **How to find the app SP client ID (UUID):** In the Databricks UI, go to Apps → your app → **Authorization** tab.
-> **Note:** The security label requires the integer SCIM ID (`id=<int64>`), not the UUID application ID.
+**Step 6: Verify**
 
-### Step 5: Verify
+Visit `https://<app-url>/health` — expected: `{"status":"ok","lakebase":true}`
+
+Visit `https://<app-url>/` for the full web UI.
+
+---
+
+### Option B: Deploy via Databricks CLI
 
 ```bash
-curl https://<app-url>/health
-# Expected: {"status":"ok","lakebase":true}
+# Step 1: Create the app
+databricks apps create lakebase-mcp-server --profile=<PROFILE>
+
+# Step 2: Sync code to workspace
+databricks sync ./app /Workspace/Users/<email>/lakebase-mcp-server/app \
+  --profile=<PROFILE> --watch=false
+
+# Step 3: Deploy
+databricks apps deploy lakebase-mcp-server \
+  --source-code-path /Workspace/Users/<email>/lakebase-mcp-server/app \
+  --profile=<PROFILE>
+
+# Step 4: Grant CAN_USE to users group (required for MAS MCP proxy)
+databricks api patch /api/2.0/permissions/apps/lakebase-mcp-server \
+  --json '{"access_control_list":[{"group_name":"users","permission_level":"CAN_USE"}]}' \
+  --profile=<PROFILE>
 ```
 
-Visit `https://<app-url>/` for the web UI.
+Then follow Step 5 (Lakebase access) and Step 6 (verify) from Option A above.
 
 ## Connecting to MAS
 
@@ -309,6 +343,9 @@ Visit `https://<app-url>/` for the web UI.
 7. **Database switcher:** Switching databases reinitializes the connection pool. The table cache is cleared automatically.
 8. **Instance switcher — role + security label:** When switching to an instance not in `app.yaml`, the app's SP must have both a PostgreSQL role AND a `databricks_auth` security label on that instance. Without the security label: `no role security label is configured`.
 9. **Migration state expiry:** Prepared migrations/tuning sessions expire after 1 hour if not completed.
+10. **Autoscaling branch ID vs display name:** `LAKEBASE_BRANCH` must be the branch **ID** (e.g. `br-cool-haze-d2hbxj2m`), not the display name (e.g. `production`). Find the ID in Databricks → Lakebase → your project → click the branch → **ID** field.
+11. **Autoscaling OAuth role — integer SCIM ID required:** The PostgreSQL security label requires the SP's integer SCIM ID (`id=<int64>`), **not** the UUID application ID. Use `GET /api/setup-role-sql` to auto-generate the correct SQL with the SCIM ID pre-filled, instead of looking it up manually.
+12. **Autoscaling credential generation:** The server uses `POST /api/2.0/postgres/credentials` (REST) for token generation. The `w.postgres.*` SDK methods fail in deployed environments; the server handles this internally via `w.api_client.do()`.
 
 ## Local Development
 
@@ -329,8 +366,8 @@ Server starts on port 8000. MCP endpoint: `http://localhost:8000/mcp/`. UI: `htt
 
 ```bash
 # Autoscaling mode (no PGHOST needed)
-export LAKEBASE_PROJECT=my-project
-export LAKEBASE_BRANCH=production
+export LAKEBASE_PROJECT=b10eb92b-dc0e-4ccf-ba26-0653c5e7ebec  # project UUID (from URL)
+export LAKEBASE_BRANCH=br-cool-haze-d2hbxj2m                   # branch ID (not display name)
 export LAKEBASE_DATABASE=my_db
 
 pip install -r app/requirements.txt

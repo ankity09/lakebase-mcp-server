@@ -4535,20 +4535,47 @@ async function runQuery() {
   resultDiv.innerHTML = '';
   const start = Date.now();
   try {
-    const rows = await api('/api/query', {
+    // Route DDL/DML to /api/execute, SELECT to /api/query
+    const firstWord = sql.replace(/^\s*/, '').split(/\s/)[0].toUpperCase();
+    const isSelect = firstWord === 'SELECT' || firstWord === 'WITH' || firstWord === 'SHOW' || firstWord === 'EXPLAIN';
+    const endpoint = isSelect ? '/api/query' : '/api/execute';
+    const raw = await api(endpoint, {
       method: 'POST',
       body: JSON.stringify({ sql }),
     });
     const elapsed = Date.now() - start;
+
+    // Handle execute_sql response format ({type, status, rows, ...})
+    if (raw && raw.type && !Array.isArray(raw)) {
+      const msg = raw.type === 'ddl'
+        ? `DDL: ${raw.status || 'OK'}`
+        : `${raw.type}: ${raw.status || 'OK'} (${raw.rowcount ?? 0} rows affected)`;
+      status.textContent = `${msg} in ${elapsed}ms`;
+      const rows = raw.rows || [];
+      lastQueryResult = rows;
+      addToQueryHistory(sql, rows.length, elapsed);
+      if (!rows.length) {
+        resultDiv.innerHTML = `<div class="result" style="color:var(--success)">${escapeHtml(msg)}</div>`;
+        return;
+      }
+      // Fall through to render rows table below
+      var rowsToRender = rows;
+    } else {
+      var rowsToRender = raw;
+    }
+    const rows = rowsToRender;
+
     if (typeof rows === 'string') {
       resultDiv.innerHTML = `<div class="result error">${escapeHtml(rows)}</div>`;
       status.textContent = '';
       addToQueryHistory(sql, 0, elapsed);
       return;
     }
-    status.textContent = `${rows.length} rows in ${elapsed}ms`;
-    lastQueryResult = rows;
-    addToQueryHistory(sql, rows.length, elapsed);
+    if (!raw.type) {
+      status.textContent = `${rows.length} rows in ${elapsed}ms`;
+      lastQueryResult = rows;
+      addToQueryHistory(sql, rows.length, elapsed);
+    }
 
     if (!rows.length) {
       resultDiv.innerHTML = '<div class="result">No results</div>';
@@ -4941,7 +4968,7 @@ async function loadProjects() {
       const isProvisioned = instanceType === 'provisioned';
       const rawName = p.name || p.id;
       const projectId = isAutoscaling && rawName.startsWith('projects/') ? rawName.replace('projects/', '') : rawName;
-      const displayName = escapeHtml(projectId);
+      const displayName = escapeHtml(p.display_name || projectId);
       const clickHandler = isProvisioned
         ? `onclick="switchInstance('${escapeHtml(projectId)}')"`
         : isAutoscaling
@@ -4981,7 +5008,8 @@ function populateProjectSelects() {
     sel.innerHTML = '<option value="">Select project...</option>' +
       projectsData.map(p => {
         const name = p.name || p.id;
-        return `<option value="${escapeHtml(name)}" ${name === current ? 'selected' : ''}>${escapeHtml(name)}</option>`;
+        const label = p.display_name || (name.startsWith('projects/') ? name.replace('projects/', '') : name);
+        return `<option value="${escapeHtml(name)}" ${name === current ? 'selected' : ''}>${escapeHtml(label)}</option>`;
       }).join('');
   });
 }
@@ -5022,15 +5050,17 @@ async function loadBranches(project) {
       <tbody>${branches.map(b => {
         const state = b.state || b.status || 'unknown';
         const sc = stateClass(state);
-        const name = b.name || b.id;
-        const parent = b.parent_branch || b.parent || '--';
+        const branchKey = b.name || b.id;
+        const branchDisplay = b.display_name || (branchKey.includes('/branches/') ? branchKey.split('/branches/').pop() : branchKey);
+        const parentRaw = b.parent_branch || b.parent || '--';
+        const parent = parentRaw !== '--' && parentRaw.includes('/branches/') ? parentRaw.split('/branches/').pop() : parentRaw;
         const created = b.created_at ? new Date(b.created_at).toLocaleString() : '--';
         return `<tr>
-          <td><strong>${escapeHtml(name)}</strong></td>
+          <td><strong>${escapeHtml(branchDisplay)}</strong></td>
           <td style="color:var(--text-secondary)">${escapeHtml(parent)}</td>
           <td><span class="status-dot-inline ${sc}"></span>${stateLabel(state)}</td>
           <td style="color:var(--text-muted);font-size:12px">${created}</td>
-          <td><button class="btn btn-sm btn-danger" onclick="deleteBranch('${escapeHtml(name)}')">Delete</button></td>
+          <td><button class="btn btn-sm btn-danger" onclick="deleteBranch('${escapeHtml(branchKey)}')">Delete</button></td>
         </tr>`;
       }).join('')}</tbody>
     </table></div>`;
