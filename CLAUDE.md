@@ -258,7 +258,7 @@ GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO \"<app-sp-client-id>\";
 ```sql
 CREATE ROLE "<app-sp-client-id>" WITH LOGIN;
 SECURITY LABEL FOR databricks_auth ON ROLE "<app-sp-client-id>"
-  IS 'type=service_principal,application_id=<app-sp-client-id>';
+  IS 'id=<app-sp-client-id>,type=service_principal';
 GRANT ALL ON DATABASE <database_name> TO "<app-sp-client-id>";
 GRANT ALL ON ALL TABLES IN SCHEMA public TO "<app-sp-client-id>";
 GRANT USAGE ON SCHEMA public TO "<app-sp-client-id>";
