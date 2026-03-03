@@ -2506,7 +2506,7 @@ def _get_schema_snapshot(database: str | None = None):
 def _tool_describe_branch(database: str | None = None):
     """Tree view of all objects in a database."""
     try:
-        if database and not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', database):
+        if database and not re.match(r'^[a-zA-Z_][a-zA-Z0-9_\-]*$', database):
             return [TextContent(type="text", text=f"Error: Invalid database name: {database}")]
         db_name = database or _current_database or os.environ.get("PGDATABASE", "") or os.environ.get("LAKEBASE_DATABASE", "")
         token = None
@@ -2570,7 +2570,7 @@ def _tool_describe_branch(database: str | None = None):
 def _tool_compare_database_schema(source_database: str, target_database: str):
     """Compare schemas between two databases, return unified diff."""
     for db in (source_database, target_database):
-        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', db):
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_\-]*$', db):
             return [TextContent(type="text", text=f"Error: Invalid database name: {db}")]
     try:
         source_schema = _get_schema_snapshot(source_database)
@@ -3276,7 +3276,7 @@ async def api_switch_database(request: Request):
     new_db = body.get("database", "").strip()
     if not new_db:
         return JSONResponse({"error": "database name is required"}, status_code=400)
-    if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', new_db):
+    if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_\-]*$', new_db):
         return JSONResponse({"error": f"Invalid database name: {new_db}"}, status_code=400)
     try:
         old_db = _current_database or os.environ.get("PGDATABASE", "") or os.environ.get("LAKEBASE_DATABASE", "")
@@ -3510,10 +3510,24 @@ async def api_info(request: Request):
 
 
 async def api_projects(request: Request):
-    """List all Lakebase projects."""
+    """List all Lakebase projects, enriched with display_name for autoscaling projects."""
     try:
         result = _tool_list_projects()
-        return JSONResponse(json.loads(result[0].text))
+        data = json.loads(result[0].text)
+        projects = data if isinstance(data, list) else []
+        # Enrich autoscaling projects with display_name from the describe endpoint
+        w = _get_ws()
+        for p in projects:
+            if p.get("instance_type") == "autoscaling" and not p.get("display_name"):
+                raw_name = p.get("name", "")
+                if raw_name.startswith("projects/"):
+                    try:
+                        detail = w.api_client.do("GET", f"/api/2.0/postgres/{raw_name}")
+                        if isinstance(detail, dict) and detail.get("display_name"):
+                            p["display_name"] = detail["display_name"]
+                    except Exception:
+                        pass
+        return JSONResponse(projects)
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
@@ -3573,12 +3587,35 @@ async def api_delete_branch(request: Request):
 
 
 async def api_endpoints(request: Request):
-    """List endpoints on a project/branch."""
+    """List endpoints on a project/branch. If no branch given, aggregates across all branches."""
     project = request.query_params.get("project", "")
-    branch = request.query_params.get("branch", "production")
+    branch = request.query_params.get("branch", "").strip()
     if not project:
         return JSONResponse({"error": "project query parameter required"}, status_code=400)
     try:
+        w = _get_ws()
+        if not branch:
+            # Enumerate all branches and aggregate their endpoints
+            project_path = _resolve_project(project)
+            br_resp = w.api_client.do("GET", f"/api/2.0/postgres/{project_path}/branches")
+            branches = br_resp.get("branches", [])
+            all_endpoints = []
+            for b in branches:
+                b_name = b.get("name", "") if isinstance(b, dict) else str(b)
+                if not b_name:
+                    continue
+                try:
+                    ep_resp = w.api_client.do("GET", f"/api/2.0/postgres/{b_name}/endpoints")
+                    eps = ep_resp.get("endpoints", [])
+                    branch_slug = b_name.split("/branches/")[-1] if "/branches/" in b_name else b_name
+                    branch_display = b.get("display_name", branch_slug) if isinstance(b, dict) else branch_slug
+                    for ep in eps:
+                        if isinstance(ep, dict):
+                            ep["_branch"] = branch_display
+                    all_endpoints.extend(eps)
+                except Exception:
+                    pass
+            return JSONResponse(all_endpoints)
         result = _tool_list_endpoints(project, branch)
         return JSONResponse(json.loads(result[0].text))
     except Exception as e:
@@ -3634,7 +3671,7 @@ async def api_setup_role_sql(request: Request):
             f'CREATE ROLE "{user_name}" WITH LOGIN;\n'
             f'SECURITY LABEL FOR databricks_auth ON ROLE "{user_name}"\n'
             f"  IS 'id={scim_id},type=service_principal';\n"
-            f'GRANT ALL ON DATABASE {database} TO "{user_name}";\n'
+            f'GRANT ALL ON DATABASE "{database}" TO "{user_name}";\n'
             f'GRANT ALL ON ALL TABLES IN SCHEMA public TO "{user_name}";\n'
             f'GRANT USAGE ON SCHEMA public TO "{user_name}";'
         )
@@ -3689,7 +3726,7 @@ async def health(request: Request):
 async def db_health(request: Request):
     """Health check for a specific database."""
     database = request.path_params["database"]
-    if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', database):
+    if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_\-]*$', database):
         return JSONResponse(
             {"error": f"Invalid database name: {database}"},
             status_code=400,
@@ -3723,7 +3760,7 @@ class DatabaseMCPRouter:
         if len(parts) >= 2 and parts[1] == "mcp":
             database = parts[0]
             # Validate database name
-            if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', database):
+            if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_\-]*$', database):
                 resp = JSONResponse(
                     {"error": f"Invalid database name: {database}"},
                     status_code=400,
