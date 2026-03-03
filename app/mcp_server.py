@@ -2560,40 +2560,41 @@ def _tool_configure_autoscaling(endpoint: str, min_cu: float, max_cu: float):
 def _tool_configure_scale_to_zero(endpoint: str, enabled: bool, idle_timeout_seconds: int = 300):
     """Enable/disable scale-to-zero (suspension) with idle timeout.
 
-    SDK schema (EndpointSpec): suspend_timeout_duration and no_suspension are
-    top-level fields under spec (NOT under autoscaling). Body format:
-      {"endpoint": {"name": ..., "spec": {"endpoint_type": ..., ...}}, "update_mask": "spec.*"}
+    SDK format (from update_endpoint source):
+    - update_mask → URL query param, camelCase field names (FieldMask.ToJsonString())
+    - body → flat dict: {"name": ..., "spec": {...}} (snake_case keys, NO envelope wrapper)
+    - w.api_client.do() accepts query= kwarg for URL query params
 
-    - Enable:  spec.suspend_timeout_duration = "Xs" + clear spec.no_suspension
-    - Disable: spec.no_suspension = True
+    Enable:  update_mask=spec.suspendTimeoutDuration, body spec.suspend_timeout_duration
+    Disable: update_mask=spec.noSuspension,           body spec.no_suspension = True
     """
     try:
         w = _get_ws()
         if enabled:
-            # Include spec.no_suspension in update_mask (without value in body) to clear it
             body = {
-                "endpoint": {
-                    "name": endpoint,
-                    "spec": {
-                        "endpoint_type": "ENDPOINT_TYPE_READ_WRITE",
-                        "suspend_timeout_duration": f"{int(idle_timeout_seconds)}s",
-                    },
+                "name": endpoint,
+                "spec": {
+                    "endpoint_type": "ENDPOINT_TYPE_READ_WRITE",
+                    "suspend_timeout_duration": f"{int(idle_timeout_seconds)}s",
                 },
-                "update_mask": "spec.suspend_timeout_duration,spec.no_suspension",
             }
+            update_mask = "spec.suspendTimeoutDuration"
         else:
             body = {
-                "endpoint": {
-                    "name": endpoint,
-                    "spec": {
-                        "endpoint_type": "ENDPOINT_TYPE_READ_WRITE",
-                        "no_suspension": True,
-                    },
+                "name": endpoint,
+                "spec": {
+                    "endpoint_type": "ENDPOINT_TYPE_READ_WRITE",
+                    "no_suspension": True,
                 },
-                "update_mask": "spec.no_suspension",
             }
-        logger.info("configure_scale_to_zero PATCH body: %s", json.dumps(body))
-        resp = w.api_client.do("PATCH", f"/api/2.0/postgres/{endpoint}", body=body)
+            update_mask = "spec.noSuspension"
+        logger.info("configure_scale_to_zero PATCH body: %s  update_mask: %s", json.dumps(body), update_mask)
+        resp = w.api_client.do(
+            "PATCH",
+            f"/api/2.0/postgres/{endpoint}",
+            body=body,
+            query={"update_mask": update_mask},
+        )
         logger.info("configure_scale_to_zero PATCH response: %s", json.dumps(resp, default=str))
         return [TextContent(type="text", text=json.dumps(resp, indent=2, default=str))]
     except Exception as e:
