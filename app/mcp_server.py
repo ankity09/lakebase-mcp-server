@@ -177,17 +177,17 @@ def _get_autoscale_credentials():
     if not host:
         raise RuntimeError(f"Endpoint {endpoint_name} has no host — is it running?")
 
-    # Generate credential using the autoscaling-specific action endpoint
-    cred_resp = w.api_client.do("POST", f"/api/2.0/postgres/{endpoint_name}:generateCredential", body={})
+    # Generate credential
+    cred_resp = w.api_client.do("POST", "/api/2.0/postgres/credentials", body={"endpoint": endpoint_name})
     _token_timestamp = time.time()
+    # Log response structure (keys only, not values) to diagnose auth issues
     logger.info("Credential response keys: %s", list(cred_resp.keys()) if isinstance(cred_resp, dict) else type(cred_resp))
-    # Response may be nested under "credential" or flat at top level
-    cred_data = cred_resp.get("credential", cred_resp) if isinstance(cred_resp, dict) else {}
-    pg_pass = cred_data.get("token") or cred_data.get("password") or cred_resp.get("token", "")
+    pg_pass = cred_resp.get("token") or cred_resp.get("password", "")
     if not pg_pass:
-        raise RuntimeError(f"Failed to generate credential for endpoint '{endpoint_name}'. Response: {cred_resp}")
-    # Use user from credential response if provided (autoscaling may return its own user)
-    user = cred_data.get("user") or cred_resp.get("user") or w.current_user.me().user_name
+        raise RuntimeError(f"No token in credential response. Keys: {list(cred_resp.keys()) if isinstance(cred_resp, dict) else cred_resp}")
+    # Use user from credential response if provided, else fall back to current user
+    user = cred_resp.get("user") or cred_resp.get("username") or w.current_user.me().user_name
+    logger.info("Connecting as user: %s", user)
 
     return {
         "host": host,
