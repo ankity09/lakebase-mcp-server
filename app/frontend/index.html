@@ -5012,16 +5012,18 @@ async function loadProjects() {
 
 function populateProjectSelects() {
   const selects = ['branchProjectSelect', 'endpointProjectSelect'];
+  // Branches and endpoints only exist on autoscaling projects — filter out provisioned instances
+  const autoscalingProjects = projectsData.filter(p => p.instance_type === 'autoscaling');
   selects.forEach(id => {
     const sel = document.getElementById(id);
     if (!sel) return;
     const current = sel.value;
     sel.innerHTML = '<option value="">Select project...</option>' +
-      projectsData.map(p => {
+      autoscalingProjects.map(p => {
         const name = p.name || p.id;
         const uuid = name.startsWith('projects/') ? name.replace('projects/', '') : name;
         const shortId = uuid.includes('-') ? uuid.split('-').slice(0, 2).join('-') : uuid;
-        const label = p.display_name || p.project_name || p.title || p.label || (p.instance_type === 'autoscaling' ? shortId : uuid);
+        const label = p.display_name || p.project_name || p.title || p.label || shortId;
         return `<option value="${escapeHtml(name)}" ${name === current ? 'selected' : ''}>${escapeHtml(label)}</option>`;
       }).join('');
   });
@@ -5158,6 +5160,10 @@ async function loadEndpoints(project, branch) {
 
   try {
     const data = await api(url);
+    if (data && data._provisioned) {
+      container.innerHTML = '<div class="empty">Provisioned Lakebase instances do not have autoscaling endpoints. Autoscaling endpoints are only available for Lakebase autoscaling (serverless) instances.</div>';
+      return;
+    }
     const endpoints = Array.isArray(data) ? data : (data.endpoints || []);
     if (!endpoints.length) {
       container.innerHTML = '<div class="empty">No endpoints found.</div>';
@@ -5167,7 +5173,9 @@ async function loadEndpoints(project, branch) {
     container.innerHTML = '<div class="card-grid">' + endpoints.map(ep => {
       const state = ep.state || ep.status || 'unknown';
       const sc = stateClass(state);
-      const name = ep.name || ep.id;
+      const fullName = ep.name || ep.id;
+      // Extract just the endpoint slug from the full resource path (e.g. "projects/.../endpoints/ep-xxx" → "ep-xxx")
+      const name = fullName.includes('/endpoints/') ? fullName.split('/endpoints/').pop() : fullName;
       const host = ep.host || ep.hostname || '--';
       const branchTag = ep._branch ? `<span class="badge badge-type" style="font-size:10px;margin-left:6px">${escapeHtml(formatBranchSlug(ep._branch))}</span>` : '';
       const minCu = ep.min_cu || ep.autoscaling?.min_cu || '--';
@@ -5175,6 +5183,8 @@ async function loadEndpoints(project, branch) {
       const stzEnabled = ep.scale_to_zero?.enabled ?? ep.autoscaling?.scale_to_zero_enabled ?? false;
       const idleTimeout = ep.scale_to_zero?.idle_timeout_seconds ?? ep.autoscaling?.idle_timeout_seconds ?? 300;
 
+      // Use slug as DOM element key (safe characters); pass fullName to API calls
+      const epKey = name;
       return `<div class="mini-card" style="cursor:default">
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px"><h3 style="margin:0">${escapeHtml(name)}</h3>${branchTag}</div>
         <div class="meta"><span class="status-dot-inline ${sc}"></span>${stateLabel(state)}</div>
@@ -5185,32 +5195,32 @@ async function loadEndpoints(project, branch) {
           <div class="form-row" style="margin-bottom:10px;">
             <div class="form-group">
               <label>Min CU</label>
-              <input type="number" id="ep-min-${escapeHtml(name)}" value="${minCu}" min="0" style="width:100%">
+              <input type="number" id="ep-min-${escapeHtml(epKey)}" value="${minCu === '--' ? '' : minCu}" placeholder="e.g. 1" min="0" style="width:100%">
             </div>
             <div class="form-group">
               <label>Max CU</label>
-              <input type="number" id="ep-max-${escapeHtml(name)}" value="${maxCu}" min="0" style="width:100%">
+              <input type="number" id="ep-max-${escapeHtml(epKey)}" value="${maxCu === '--' ? '' : maxCu}" placeholder="e.g. 4" min="0" style="width:100%">
             </div>
           </div>
-          <button class="btn btn-sm btn-primary" onclick="updateEndpointConfig('${escapeHtml(name)}')">Update Scaling</button>
+          <button class="btn btn-sm btn-primary" onclick="updateEndpointConfig('${escapeHtml(epKey)}', '${escapeHtml(fullName)}')">Update Scaling</button>
         </div>
 
         <div style="margin-top:12px; padding-top:12px; border-top:1px solid var(--border);">
           <label style="margin-bottom:8px; font-weight:600; color:var(--text-primary);">Scale-to-Zero</label>
           <div style="display:flex; align-items:center; gap:12px; margin-bottom:8px;">
             <label class="toggle">
-              <input type="checkbox" id="ep-stz-${escapeHtml(name)}" ${stzEnabled ? 'checked' : ''}>
+              <input type="checkbox" id="ep-stz-${escapeHtml(epKey)}" ${stzEnabled ? 'checked' : ''}>
               <span class="slider"></span>
             </label>
             <span style="font-size:12px; color:var(--text-secondary);">${stzEnabled ? 'Enabled' : 'Disabled'}</span>
           </div>
           <div class="form-group" style="max-width:200px;">
             <label>Idle timeout (seconds)</label>
-            <input type="number" id="ep-idle-${escapeHtml(name)}" value="${idleTimeout}" min="0">
+            <input type="number" id="ep-idle-${escapeHtml(epKey)}" value="${idleTimeout}" min="0">
           </div>
-          <button class="btn btn-sm btn-secondary" onclick="updateScaleToZero('${escapeHtml(name)}')">Update S2Z</button>
+          <button class="btn btn-sm btn-secondary" onclick="updateScaleToZero('${escapeHtml(epKey)}', '${escapeHtml(fullName)}')">Update S2Z</button>
         </div>
-        <div id="ep-result-${escapeHtml(name)}" style="margin-top:8px;"></div>
+        <div id="ep-result-${escapeHtml(epKey)}" style="margin-top:8px;"></div>
       </div>`;
     }).join('') + '</div>';
   } catch (e) {
@@ -5218,13 +5228,17 @@ async function loadEndpoints(project, branch) {
   }
 }
 
-async function updateEndpointConfig(epName) {
-  const minCu = parseInt(document.getElementById('ep-min-' + epName).value, 10);
-  const maxCu = parseInt(document.getElementById('ep-max-' + epName).value, 10);
-  const resultDiv = document.getElementById('ep-result-' + epName);
+async function updateEndpointConfig(epKey, epFullName) {
+  const minCu = parseFloat(document.getElementById('ep-min-' + epKey).value);
+  const maxCu = parseFloat(document.getElementById('ep-max-' + epKey).value);
+  const resultDiv = document.getElementById('ep-result-' + epKey);
+  if (isNaN(minCu) || isNaN(maxCu)) {
+    resultDiv.innerHTML = `<div class="result error" style="font-size:11px;padding:8px;">Min CU and Max CU are required — enter numbers (e.g. 1 and 4)</div>`;
+    return;
+  }
   resultDiv.innerHTML = '<span class="spinner"></span>';
   try {
-    const resp = await api(`/api/endpoints/${encodeURIComponent(epName)}/config`, {
+    const resp = await api(`/api/endpoints/${encodeURIComponent(epFullName)}/config`, {
       method: 'PATCH',
       body: JSON.stringify({ min_cu: minCu, max_cu: maxCu }),
     });
@@ -5236,13 +5250,13 @@ async function updateEndpointConfig(epName) {
   }
 }
 
-async function updateScaleToZero(epName) {
-  const enabled = document.getElementById('ep-stz-' + epName).checked;
-  const idleTimeout = parseInt(document.getElementById('ep-idle-' + epName).value, 10);
-  const resultDiv = document.getElementById('ep-result-' + epName);
+async function updateScaleToZero(epKey, epFullName) {
+  const enabled = document.getElementById('ep-stz-' + epKey).checked;
+  const idleTimeout = parseInt(document.getElementById('ep-idle-' + epKey).value, 10);
+  const resultDiv = document.getElementById('ep-result-' + epKey);
   resultDiv.innerHTML = '<span class="spinner"></span>';
   try {
-    const resp = await api(`/api/endpoints/${encodeURIComponent(epName)}/config`, {
+    const resp = await api(`/api/endpoints/${encodeURIComponent(epFullName)}/config`, {
       method: 'PATCH',
       body: JSON.stringify({ scale_to_zero: { enabled: enabled, idle_timeout_seconds: idleTimeout } }),
     });

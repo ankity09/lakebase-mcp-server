@@ -2400,15 +2400,26 @@ def _tool_get_endpoint_status(endpoint: str):
 
 
 def _tool_create_branch(project: str, branch_id: str = "", parent_branch: str = "production", display_name: str = ""):
-    """Create a new branch. branch_id is kept for backward compat but display_name is preferred."""
+    """Create a new branch. branch_id is the resource slug (required by API); display_name is optional human label."""
     try:
         w = _get_ws()
         project_path = _resolve_project(project)
         parent_path = _resolve_branch(project, parent_branch)
-        branch_body: dict = {"parent_branch": parent_path}
-        name = display_name or branch_id
-        if name:
-            branch_body["display_name"] = name
+
+        # branch_id is required by the Databricks API. If not explicitly provided,
+        # auto-generate a slug from display_name: lowercase, strip non-alphanum, replace spaces with hyphens.
+        effective_branch_id = branch_id
+        if not effective_branch_id:
+            slug_source = display_name or "dev"
+            slug = re.sub(r'[^a-z0-9]+', '-', slug_source.lower()).strip('-')
+            effective_branch_id = slug or "dev"
+
+        branch_body: dict = {
+            "parent_branch": parent_path,
+            "branch_id": effective_branch_id,
+        }
+        if display_name:
+            branch_body["display_name"] = display_name
         resp = w.api_client.do("POST", f"/api/2.0/postgres/{project_path}/branches", body={
             "branch": branch_body,
         })
@@ -2439,6 +2450,13 @@ def _tool_delete_branch(branch: str, confirm: bool = False):
 
 def _tool_configure_autoscaling(endpoint: str, min_cu: float, max_cu: float):
     """Configure autoscaling min/max CU."""
+    if min_cu is None or max_cu is None:
+        return [TextContent(type="text", text=json.dumps({"error": "min_cu and max_cu are required and must be numbers"}, indent=2))]
+    try:
+        min_cu = float(min_cu)
+        max_cu = float(max_cu)
+    except (TypeError, ValueError):
+        return [TextContent(type="text", text=json.dumps({"error": f"min_cu and max_cu must be numbers, got: min_cu={min_cu!r}, max_cu={max_cu!r}"}, indent=2))]
     try:
         w = _get_ws()
         resp = w.api_client.do("PATCH", f"/api/2.0/postgres/{endpoint}", body={
@@ -3646,13 +3664,21 @@ async def api_projects(request: Request):
                             for field in ("uid", "create_time", "update_time"):
                                 if detail.get(field) and field not in p:
                                     p[field] = detail[field]
-                            # Extract state and region from nested status object
+                            # Extract state: check top-level first, then nested status object
+                            # (API may return state at either location depending on version)
+                            state_val = detail.get("state")
+                            if not state_val:
+                                status_obj = detail.get("status", {})
+                                if isinstance(status_obj, dict):
+                                    state_val = status_obj.get("state")
+                            if state_val:
+                                p["state"] = state_val
+                            # Extract region from nested status object
                             status_obj = detail.get("status", {})
-                            if isinstance(status_obj, dict):
-                                if status_obj.get("state"):
-                                    p["state"] = status_obj["state"]
-                                if status_obj.get("region"):
-                                    p["region"] = status_obj["region"]
+                            if isinstance(status_obj, dict) and status_obj.get("region"):
+                                p["region"] = status_obj["region"]
+                            elif detail.get("region"):
+                                p["region"] = detail["region"]
                     except Exception as e:
                         logger.warning("Failed to enrich project %s: %s", raw_name, e)
         return JSONResponse(projects)
@@ -3726,6 +3752,13 @@ async def api_endpoints(request: Request):
     branch = request.query_params.get("branch", "").strip()
     if not project:
         return JSONResponse({"error": "project query parameter required"}, status_code=400)
+    # Endpoints only exist on autoscaling (Neon) projects, not provisioned instances.
+    # Provisioned instances use the database resource API, not the postgres projects API.
+    # Check if this looks like a provisioned instance (no UUID format and not a known project path).
+    project_id = project.replace("projects/", "")
+    _uuid_re = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.IGNORECASE)
+    if not _uuid_re.match(project_id):
+        return JSONResponse({"_provisioned": True, "endpoints": [], "message": "Provisioned instances do not have autoscaling endpoints."})
     try:
         w = _get_ws()
         if not branch:
