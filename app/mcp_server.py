@@ -3518,15 +3518,24 @@ async def api_projects(request: Request):
         # Enrich autoscaling projects with display_name from the describe endpoint
         w = _get_ws()
         for p in projects:
-            if p.get("instance_type") == "autoscaling" and not p.get("display_name"):
+            if p.get("instance_type") == "autoscaling":
                 raw_name = p.get("name", "")
                 if raw_name.startswith("projects/"):
                     try:
                         detail = w.api_client.do("GET", f"/api/2.0/postgres/{raw_name}")
-                        if isinstance(detail, dict) and detail.get("display_name"):
-                            p["display_name"] = detail["display_name"]
-                    except Exception:
-                        pass
+                        if isinstance(detail, dict):
+                            logger.info("Project detail keys for %s: %s", raw_name, list(detail.keys()))
+                            # Merge all fields from detail into project
+                            for k, v in detail.items():
+                                if k not in p or not p[k]:
+                                    p[k] = v
+                            # Try common display name field names
+                            for field in ("display_name", "project_name", "title", "label", "human_name"):
+                                if detail.get(field):
+                                    p["display_name"] = detail[field]
+                                    break
+                    except Exception as e:
+                        logger.warning("Failed to enrich project %s: %s", raw_name, e)
         return JSONResponse(projects)
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)

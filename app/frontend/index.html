@@ -4968,7 +4968,7 @@ async function loadProjects() {
       const isProvisioned = instanceType === 'provisioned';
       const rawName = p.name || p.id;
       const projectId = isAutoscaling && rawName.startsWith('projects/') ? rawName.replace('projects/', '') : rawName;
-      const displayName = escapeHtml(p.display_name || projectId);
+      const displayName = escapeHtml(p.display_name || p.project_name || p.title || p.label || projectId);
       const clickHandler = (isProvisioned || isAutoscaling)
         ? `onclick="switchInstance('${escapeHtml(projectId)}')"`
         : '';
@@ -5006,7 +5006,7 @@ function populateProjectSelects() {
     sel.innerHTML = '<option value="">Select project...</option>' +
       projectsData.map(p => {
         const name = p.name || p.id;
-        const label = p.display_name || (name.startsWith('projects/') ? name.replace('projects/', '') : name);
+        const label = p.display_name || p.project_name || p.title || p.label || (name.startsWith('projects/') ? name.replace('projects/', '') : name);
         return `<option value="${escapeHtml(name)}" ${name === current ? 'selected' : ''}>${escapeHtml(label)}</option>`;
       }).join('');
   });
