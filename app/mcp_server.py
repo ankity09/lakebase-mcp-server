@@ -2369,6 +2369,8 @@ def _tool_list_branches(project: str):
         project_path = _resolve_project(project)
         resp = w.api_client.do("GET", f"/api/2.0/postgres/{project_path}/branches")
         branches = resp.get("branches", [])
+        branch_names = [b.get("name", b.get("branch_id", "?")) for b in branches if isinstance(b, dict)]
+        logger.info("list_branches %s → %d branches: %s", project_path, len(branch_names), branch_names)
         return [TextContent(type="text", text=json.dumps(branches, indent=2, default=str))]
     except Exception as e:
         return [TextContent(type="text", text=json.dumps({"error": str(e)}, indent=2))]
@@ -2422,14 +2424,24 @@ def _tool_create_branch(project: str, branch_id: str = "", parent_branch: str = 
         }
         if display_name:
             body["display_name"] = display_name
-        resp = w.api_client.do(
-            "POST",
-            f"/api/2.0/postgres/{project_path}/branches?branch_id={effective_branch_id}",
-            body=body,
-        )
+
+        url = f"/api/2.0/postgres/{project_path}/branches?branch_id={effective_branch_id}"
+        logger.info("create_branch POST %s body=%s", url, json.dumps(body))
+        resp = w.api_client.do("POST", url, body=body)
+        logger.info("create_branch response: %s", json.dumps(resp, default=str))
         return [TextContent(type="text", text=json.dumps(resp, indent=2, default=str))]
     except Exception as e:
-        return [TextContent(type="text", text=json.dumps({"error": str(e)}, indent=2))]
+        logger.error("create_branch failed (project=%s parent_path=%s branch_id=%s): %s",
+                     project_path, parent_path, effective_branch_id, e)
+        return [TextContent(type="text", text=json.dumps({
+            "error": str(e),
+            "debug": {
+                "project_path": project_path,
+                "parent_path": parent_path,
+                "branch_id": effective_branch_id,
+                "url": f"/api/2.0/postgres/{project_path}/branches?branch_id={effective_branch_id}",
+            },
+        }, indent=2))]
 
 
 def _tool_delete_branch(branch: str, confirm: bool = False):
@@ -2478,43 +2490,42 @@ def _tool_configure_autoscaling(endpoint: str, min_cu: float, max_cu: float):
 def _tool_configure_scale_to_zero(endpoint: str, enabled: bool, idle_timeout_seconds: int = 300):
     """Enable/disable scale-to-zero (suspension) with idle timeout.
 
-    Uses the same body-based update_mask format as configure_autoscaling (which works).
-    The API expects: {"endpoint": {...}, "update_mask": "..."} with update_mask in the body.
-    scale-to-zero fields live under autoscaling.scale_to_zero in the old-style API.
+    Uses the same body-based update_mask + {"endpoint": {...}} wrapper pattern
+    as configure_autoscaling (confirmed working).
+
+    To enable: set spec.suspend_timeout_duration to "Xs" (seconds string).
+    To disable: set spec.no_suspension = true (never suspend).
+    Both fields go inside: {"endpoint": {"name": ..., "spec": {...}}, "update_mask": "spec.xxx"}
     """
     try:
         w = _get_ws()
-        # First GET to capture the actual endpoint structure for diagnostics if PATCH fails
-        get_resp = {}
-        try:
-            get_resp = w.api_client.do("GET", f"/api/2.0/postgres/{endpoint}")
-        except Exception:
-            pass
-
-        # Mirror the working configure_autoscaling pattern: update_mask in body, endpoint wrapper
-        resp = w.api_client.do("PATCH", f"/api/2.0/postgres/{endpoint}", body={
-            "endpoint": {
-                "name": endpoint,
-                "autoscaling": {
-                    "scale_to_zero": {
-                        "enabled": enabled,
-                        "idle_timeout_seconds": int(idle_timeout_seconds),
+        if enabled:
+            body = {
+                "endpoint": {
+                    "name": endpoint,
+                    "spec": {
+                        "suspend_timeout_duration": f"{int(idle_timeout_seconds)}s",
                     },
                 },
-            },
-            "update_mask": "autoscaling.scale_to_zero.enabled,autoscaling.scale_to_zero.idle_timeout_seconds",
-        })
+                "update_mask": "spec.suspend_timeout_duration",
+            }
+        else:
+            body = {
+                "endpoint": {
+                    "name": endpoint,
+                    "spec": {
+                        "no_suspension": True,
+                    },
+                },
+                "update_mask": "spec.no_suspension",
+            }
+        logger.info("configure_scale_to_zero PATCH body: %s", json.dumps(body))
+        resp = w.api_client.do("PATCH", f"/api/2.0/postgres/{endpoint}", body=body)
+        logger.info("configure_scale_to_zero PATCH response: %s", json.dumps(resp, default=str))
         return [TextContent(type="text", text=json.dumps(resp, indent=2, default=str))]
     except Exception as e:
-        # Include the actual endpoint structure so we can see the real field names
-        diag = {
-            "error": str(e),
-            "endpoint_structure": {
-                k: v for k, v in (get_resp or {}).items()
-                if k in ("spec", "autoscaling", "status", "name", "endpoint_type")
-            },
-        }
-        return [TextContent(type="text", text=json.dumps(diag, indent=2, default=str))]
+        logger.error("configure_scale_to_zero failed for %s: %s", endpoint, e)
+        return [TextContent(type="text", text=json.dumps({"error": str(e)}, indent=2))]
 
 
 # ── Tool implementations (Data quality) ──────────────────────────────
