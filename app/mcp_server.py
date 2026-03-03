@@ -2560,30 +2560,25 @@ def _tool_configure_autoscaling(endpoint: str, min_cu: float, max_cu: float):
 def _tool_configure_scale_to_zero(endpoint: str, enabled: bool, idle_timeout_seconds: int = 300):
     """Enable/disable scale-to-zero (suspension) with idle timeout.
 
-    GET response shows: spec=null, status has autoscaling_limit_min_cu/max_cu and
-    suspend_timeout_duration. The legacy body PATCH only confirms autoscaling.min_cu
-    and autoscaling.max_cu as valid paths. Other paths give "non-default value" (invalid path)
-    or "Unknown field path" (URL param format not supported by this API version).
-
-    Strategy: GET current state first, skip PATCH if already at desired state (same value
-    triggers "non-default value" error), otherwise try PATCH with several candidate paths.
+    The Lakebase PATCH API only supports autoscaling.min_cu and autoscaling.max_cu.
+    The suspend_timeout_duration and no_suspension fields are not writable via PATCH
+    on this workspace's API version. We read current state and return success when
+    already at the desired state.
     """
     try:
         w = _get_ws()
         timeout_sec = int(idle_timeout_seconds)
         desired_timeout_str = f"{timeout_sec}s"
 
-        # GET current endpoint state (status has all readable fields; spec is null)
+        # GET current endpoint state (spec=null in response; all fields are under status)
         get_resp = w.api_client.do("GET", f"/api/2.0/postgres/{endpoint}")
         status = get_resp.get("status") or {}
         current_timeout = status.get("suspend_timeout_duration", "0s")
         current_no_suspension = status.get("no_suspension", False)
-        current_min_cu = status.get("autoscaling_limit_min_cu", 0.5)
-        current_max_cu = status.get("autoscaling_limit_max_cu", 4.0)
-        logger.info("configure_scale_to_zero current: timeout=%s no_suspension=%s min_cu=%s max_cu=%s",
-                    current_timeout, current_no_suspension, current_min_cu, current_max_cu)
+        logger.info("configure_scale_to_zero current: timeout=%s no_suspension=%s",
+                    current_timeout, current_no_suspension)
 
-        # Skip PATCH if already at desired state — same value causes "non-default value" API error
+        # Return success if already at desired state
         if enabled and current_timeout == desired_timeout_str and not current_no_suspension:
             return [TextContent(type="text", text=json.dumps({
                 "status": "already_enabled",
@@ -2596,49 +2591,19 @@ def _tool_configure_scale_to_zero(endpoint: str, enabled: bool, idle_timeout_sec
                 "message": "Scale-to-zero already disabled",
             }, indent=2))]
 
-        # Try PATCH — confirmed working: autoscaling.min_cu,autoscaling.max_cu (body-based)
-        # Include those alongside scale-to-zero fields (uses CURRENT values to avoid changing CU)
-        if enabled:
-            patch_attempts = [
-                {"endpoint": {"name": endpoint,
-                              "autoscaling": {"min_cu": current_min_cu, "max_cu": current_max_cu,
-                                              "suspend_timeout_duration": desired_timeout_str}},
-                 "update_mask": "autoscaling.min_cu,autoscaling.max_cu,autoscaling.suspend_timeout_duration"},
-                {"endpoint": {"name": endpoint,
-                              "autoscaling": {"min_cu": current_min_cu, "max_cu": current_max_cu},
-                              "scale_to_zero": {"suspend_timeout_duration": desired_timeout_str}},
-                 "update_mask": "autoscaling.min_cu,autoscaling.max_cu,scale_to_zero.suspend_timeout_duration"},
-                {"endpoint": {"name": endpoint,
-                              "autoscaling": {"min_cu": current_min_cu, "max_cu": current_max_cu,
-                                              "suspend_timeout": timeout_sec}},
-                 "update_mask": "autoscaling.min_cu,autoscaling.max_cu,autoscaling.suspend_timeout"},
-            ]
-        else:
-            patch_attempts = [
-                {"endpoint": {"name": endpoint,
-                              "autoscaling": {"min_cu": current_min_cu, "max_cu": current_max_cu,
-                                              "no_suspension": True}},
-                 "update_mask": "autoscaling.min_cu,autoscaling.max_cu,autoscaling.no_suspension"},
-                {"endpoint": {"name": endpoint,
-                              "autoscaling": {"min_cu": current_min_cu, "max_cu": current_max_cu},
-                              "no_suspension": True},
-                 "update_mask": "autoscaling.min_cu,autoscaling.max_cu,no_suspension"},
-            ]
-
-        for i, body in enumerate(patch_attempts):
-            logger.info("configure_scale_to_zero attempt %d: %s", i + 1, json.dumps(body, default=str))
-            try:
-                resp = w.api_client.do("PATCH", f"/api/2.0/postgres/{endpoint}", body=body)
-                logger.info("configure_scale_to_zero attempt %d success", i + 1)
-                return [TextContent(type="text", text=json.dumps(resp, indent=2, default=str))]
-            except Exception as e_i:
-                logger.warning("configure_scale_to_zero attempt %d failed: %s", i + 1, e_i)
-
+        # The suspend_timeout_duration and no_suspension fields are not writable via PATCH
+        # on this workspace's API version. Only autoscaling.min_cu/max_cu are supported.
         return [TextContent(type="text", text=json.dumps({
-            "error": "Scale-to-zero update not supported by this endpoint's API version",
-            "current_state": {"suspend_timeout_duration": current_timeout,
-                              "no_suspension": current_no_suspension},
-            "hint": "The suspend_timeout_duration and no_suspension fields cannot be updated via PATCH on this workspace.",
+            "error": "Scale-to-zero configuration cannot be changed via this API",
+            "current_state": {
+                "suspend_timeout_duration": current_timeout,
+                "no_suspension": current_no_suspension,
+            },
+            "requested": {
+                "enabled": enabled,
+                "idle_timeout_seconds": timeout_sec,
+            },
+            "hint": "Use the Databricks UI (Lakebase → branch → endpoint → Configure) to change scale-to-zero settings.",
         }, indent=2))]
     except Exception as e:
         logger.error("configure_scale_to_zero failed for %s: %s", endpoint, e)
