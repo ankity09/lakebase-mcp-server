@@ -263,21 +263,15 @@ In Apps → your app → **Permissions** tab:
 
 The app runs as an auto-created service principal. Find its UUID in Apps → your app → **Authorization** tab.
 
-*Provisioned Lakebase:*
-```bash
-databricks psql <instance-name> --profile=<PROFILE> -- -d <database_name> -c "
-GRANT ALL ON ALL TABLES IN SCHEMA public TO \"<app-sp-client-id>\";
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO \"<app-sp-client-id>\";
-"
-```
+**Both provisioned and autoscaling instances require the same three-step SQL setup** — `CREATE ROLE`, `SECURITY LABEL`, and `GRANT`. The security label is always required because the instance switcher connects via OAuth token regardless of instance type.
 
-*Autoscaling Lakebase:* The app SP needs an OAuth PostgreSQL role. After the app is running, use the built-in helper to generate the exact SQL:
+Use the built-in helper to generate the correct SQL with the integer SCIM ID pre-filled:
 
 ```
 GET https://<app-url>/api/setup-role-sql
 ```
 
-This returns ready-to-run SQL with the correct integer SCIM ID pre-filled. Copy the SQL from the response and run it in the Lakebase UI: branch → **Roles & Databases** → **Edit data** (the SQL editor).
+Copy the returned SQL and run it in the instance's SQL editor (provisioned: **Edit data** on the instance page; autoscaling: branch → **Roles & Databases** → **Edit data**).
 
 The SQL looks like:
 ```sql
@@ -288,6 +282,8 @@ GRANT ALL ON DATABASE "<database>" TO "<app-sp-uuid>";
 GRANT ALL ON ALL TABLES IN SCHEMA public TO "<app-sp-uuid>";
 GRANT USAGE ON SCHEMA public TO "<app-sp-uuid>";
 ```
+
+Run this SQL on **every** Lakebase instance the app needs to connect to — including instances listed in `app.yaml` resources if you want to use the instance switcher on them.
 
 > **Who can run this SQL?** `CREATE ROLE` and `SECURITY LABEL` require **PostgreSQL superuser** privileges. In Databricks Lakebase, the workspace admin or the user who created the Lakebase project has superuser access. Run the SQL while logged in as that user — in the Lakebase UI "Edit data" editor, your own credentials (email) are used, so you must be the project owner or a workspace admin. Regular workspace users cannot run these statements.
 
@@ -346,7 +342,7 @@ Then follow Step 5 (Lakebase access) and Step 6 (verify) from Option A above.
 5. **CAN_USE for users group:** MAS MCP proxy needs CAN_USE on the app. Grant to `users` group.
 6. **Autoscaling scale-to-zero:** If the autoscaling endpoint is suspended, the first request may take 2-5 seconds while compute wakes up.
 7. **Database switcher:** Switching databases reinitializes the connection pool. The table cache is cleared automatically.
-8. **Instance switcher — role + security label:** When switching to an instance not in `app.yaml`, the app's SP must have both a PostgreSQL role AND a `databricks_auth` security label on that instance. Without the security label: `no role security label is configured`.
+8. **Instance switcher — role + security label required on ALL instances:** The instance switcher always connects via a generated OAuth token (even for instances listed in `app.yaml` resources). This means the app SP needs `CREATE ROLE` + `SECURITY LABEL FOR databricks_auth` + `GRANT` on every instance it will switch to — not just "extra" ones. The `app.yaml` resources block only handles the startup connection, not the switcher. Without the security label: `no role security label is configured`. Use `GET /api/setup-role-sql` to generate the correct SQL.
 9. **Migration state expiry:** Prepared migrations/tuning sessions expire after 1 hour if not completed.
 10. **Autoscaling branch ID vs display name:** `LAKEBASE_BRANCH` must be the branch **ID** (e.g. `br-cool-haze-d2hbxj2m`), not the display name (e.g. `production`). Find the ID in Databricks → Lakebase → your project → click the branch → **ID** field.
 11. **Autoscaling OAuth role — integer SCIM ID required:** The PostgreSQL security label requires the SP's integer SCIM ID (`id=<int64>`), **not** the UUID application ID. Use `GET /api/setup-role-sql` to auto-generate the correct SQL with the SCIM ID pre-filled, instead of looking it up manually.

@@ -165,11 +165,11 @@ From the output, note:
 - `service_principal_client_id` — e.g. `ecbb98b7-7186-43cf-ab8d-ac56bffc0f8e` (used as the PostgreSQL role name)
 - `service_principal_id` — e.g. `70866217708507` (numeric ID, used in the security label)
 
-#### 5b: For Each Lakebase Instance in `app.yaml`
+#### 5b: For Every Lakebase Instance the App Will Connect To
 
-Instances listed as `resources` in `app.yaml` are **automatically configured** by Databricks — the role, security label, and grants are set up when the app deploys. No manual action needed for these.
+> **Important:** The instance switcher in the UI always connects via a generated OAuth token — even for instances listed in `app.yaml` resources. The `resources:` block only handles the app's startup connection; it does **not** automatically set up the role/security label for token-based switcher connections. You must run the SQL below on every instance the app needs to switch to.
 
-#### 5c: For Additional Instances (not in `app.yaml`)
+#### 5c: For Each Instance (including those in `app.yaml`)
 
 If you want the app to switch to Lakebase instances that are **not** in `app.yaml` (via the UI instance switcher), you must manually create the role, security label, and grants on each one:
 
@@ -589,7 +589,7 @@ Server starts on port 8000. MCP endpoint: `http://localhost:8000/mcp/`. Web UI: 
 5. **CAN_USE for users group**: The MAS MCP proxy needs `CAN_USE` on the app. Grant to the `users` group.
 6. **Autoscaling scale-to-zero**: If the autoscaling endpoint is suspended, the first request may take 2-5 seconds while compute wakes up.
 7. **Database switcher**: Switching databases reinitializes the connection pool. The table cache is cleared automatically.
-8. **Instance switcher — role + security label**: When switching to an instance not in `app.yaml`, the app's SP must have both a PostgreSQL role AND a `databricks_auth` security label on that instance. See [Step 5c](#5c-for-additional-instances-not-in-appyaml). Without the security label, you get: `no role security label is configured`.
+8. **Instance switcher — role + security label required on ALL instances**: The switcher connects via generated OAuth token even for instances in `app.yaml` resources. The `resources:` block only handles startup; it does not auto-configure the role/security label for token-based switching. Run the `CREATE ROLE` + `SECURITY LABEL` + `GRANT` SQL (see [Step 5c](#5c-for-each-instance-including-those-in-appyaml)) on every instance the app will switch to. Without the security label: `no role security label is configured`.
 9. **Migration state expiry**: Prepared migrations/tuning sessions expire after 1 hour if not completed. Call `prepare_*` again to create a new session.
 
 ## Environment Variables
