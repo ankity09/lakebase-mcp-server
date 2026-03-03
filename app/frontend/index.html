@@ -3147,7 +3147,7 @@
               <input id="newBranchProject" type="text" placeholder="Project name">
             </div>
             <div class="form-group">
-              <label>Branch ID</label>
+              <label>Branch Name</label>
               <input id="newBranchId" type="text" placeholder="e.g. dev-feature-x">
             </div>
             <div class="form-group">
@@ -5061,7 +5061,10 @@ async function loadBranches(project) {
     container.innerHTML = `<div class="table-wrap"><table>
       <thead><tr><th>Name</th><th>Parent</th><th>State</th><th>Created</th><th>Actions</th></tr></thead>
       <tbody>${branches.map(b => {
-        const state = b.state || b.status || 'unknown';
+        const rawState = b.state;
+        const state = (typeof rawState === 'object' && rawState !== null)
+          ? (rawState.state || rawState.value || rawState.status || 'unknown')
+          : (rawState || b.status || 'unknown');
         const sc = stateClass(state);
         const branchKey = b.name || b.id;
         const branchSlug = branchKey.includes('/branches/') ? branchKey.split('/branches/').pop() : branchKey;
@@ -5100,8 +5103,8 @@ async function createBranch() {
   const resultDiv = document.getElementById('createBranchResult');
 
   if (!project || !branchId) {
-    showToast('Project and Branch ID are required', 'warning');
-    resultDiv.innerHTML = '<div class="result error">Project and Branch ID are required.</div>';
+    showToast('Project and Branch Name are required', 'warning');
+    resultDiv.innerHTML = '<div class="result error">Project and Branch Name are required.</div>';
     return;
   }
 
@@ -5109,7 +5112,7 @@ async function createBranch() {
   try {
     const resp = await api('/api/branches/create', {
       method: 'POST',
-      body: JSON.stringify({ project, branch_id: branchId, parent_branch: parent || 'production' }),
+      body: JSON.stringify({ project, display_name: branchId, parent_branch: parent || 'production' }),
     });
     resultDiv.innerHTML = `<div class="result success"><pre><code>${escapeHtml(JSON.stringify(resp, null, 2))}</code></pre></div>`;
     showToast(`Branch "${branchId}" created successfully`, 'success');

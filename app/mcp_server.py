@@ -1465,8 +1465,9 @@ async def handle_call_tool(name: str, arguments: dict):
         elif name == "create_branch":
             return _tool_create_branch(
                 arguments["project"],
-                arguments["branch_id"],
-                arguments.get("parent_branch", "production"),
+                branch_id=arguments.get("branch_id", ""),
+                parent_branch=arguments.get("parent_branch", "production"),
+                display_name=arguments.get("display_name", arguments.get("branch_id", "")),
             )
         elif name == "delete_branch":
             return _tool_delete_branch(
@@ -2320,15 +2321,18 @@ def _tool_get_endpoint_status(endpoint: str):
 # ── Tool implementations (Branch management) ─────────────────────────
 
 
-def _tool_create_branch(project: str, branch_id: str, parent_branch: str = "production"):
-    """Create a new branch."""
+def _tool_create_branch(project: str, branch_id: str = "", parent_branch: str = "production", display_name: str = ""):
+    """Create a new branch. branch_id is kept for backward compat but display_name is preferred."""
     try:
         w = _get_ws()
         project_path = _resolve_project(project)
         parent_path = _resolve_branch(project, parent_branch)
+        branch_body: dict = {"parent_branch": parent_path}
+        name = display_name or branch_id
+        if name:
+            branch_body["display_name"] = name
         resp = w.api_client.do("POST", f"/api/2.0/postgres/{project_path}/branches", body={
-            "branch": {"parent_branch": parent_path},
-            "branch_id": branch_id,
+            "branch": branch_body,
         })
         return [TextContent(type="text", text=json.dumps(resp, indent=2, default=str))]
     except Exception as e:
@@ -3517,18 +3521,30 @@ async def api_projects(request: Request):
         projects = data if isinstance(data, list) else []
         # Enrich autoscaling projects with state/region from the describe endpoint.
         # Keys returned: name, uid, create_time, update_time, status
-        # LAKEBASE_PROJECT_NAME env var provides a human-readable name for the configured project.
+        # LAKEBASE_PROJECT_NAME  = single project name (uuid matched via LAKEBASE_PROJECT)
+        # LAKEBASE_PROJECT_NAMES = multi: "uuid1=Name One,uuid2=Name Two"
         configured_project = os.environ.get("LAKEBASE_PROJECT", "")
         project_name_env = os.environ.get("LAKEBASE_PROJECT_NAME", "")
+        project_names_env = os.environ.get("LAKEBASE_PROJECT_NAMES", "")
+        # Build uuid→name mapping; LAKEBASE_PROJECT_NAMES takes all pairs, then single-project fallback
+        project_name_map: dict = {}
+        if project_names_env:
+            for pair in project_names_env.split(","):
+                pair = pair.strip()
+                if "=" in pair:
+                    uuid_part, name_part = pair.split("=", 1)
+                    project_name_map[uuid_part.strip()] = name_part.strip()
+        if project_name_env and configured_project and configured_project not in project_name_map:
+            project_name_map[configured_project] = project_name_env
         w = _get_ws()
         for p in projects:
             if p.get("instance_type") == "autoscaling":
                 raw_name = p.get("name", "")
                 if raw_name.startswith("projects/"):
                     project_uuid = raw_name.replace("projects/", "")
-                    # Apply user-supplied name for the configured project
-                    if project_name_env and project_uuid == configured_project:
-                        p["display_name"] = project_name_env
+                    # Apply user-supplied name if available
+                    if project_uuid in project_name_map:
+                        p["display_name"] = project_name_map[project_uuid]
                     try:
                         detail = w.api_client.do("GET", f"/api/2.0/postgres/{raw_name}")
                         if isinstance(detail, dict):
@@ -3580,7 +3596,10 @@ async def api_create_branch(request: Request):
     body = await request.json()
     try:
         result = _tool_create_branch(
-            body["project"], body["branch_id"], body.get("parent_branch", "production")
+            body["project"],
+            branch_id=body.get("branch_id", ""),
+            parent_branch=body.get("parent_branch", "production"),
+            display_name=body.get("display_name", ""),
         )
         return JSONResponse(json.loads(result[0].text))
     except Exception as e:
