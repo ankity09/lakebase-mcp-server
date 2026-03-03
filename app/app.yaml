@@ -9,10 +9,10 @@ command:
 # LAKEBASE_DATABASE      = database name for the primary project (optional, default: databricks_postgres)
 env:
   - name: LAKEBASE_PROJECT_NAMES
-    value: "b10eb92b-dc0e-4ccf-ba26-0653c5e7ebec=project-x,99a2c711-6b51-45e1-9b64-2b56f5630056=mfg-epl-lakebase"
+    value: "0d32a239-6eb5-47b8-a1c3-950e3072edda=autoscaling-mcp-test-project,372e4f39-ce0f-4dbb-944a-12f3543f64ba=app-project"
   - name: LAKEBASE_PROJECT
-    value: "99a2c711-6b51-45e1-9b64-2b56f5630056"
+    value: "0d32a239-6eb5-47b8-a1c3-950e3072edda"
   - name: LAKEBASE_BRANCH
-    value: "br-holy-meadow-d2rfflti"
+    value: "br-billowing-rice-d2fc8f26"
   - name: LAKEBASE_DATABASE
-    value: "mfg-epl-database"
+    value: "databricks_postgres"

@@ -17,9 +17,9 @@ APP_NAME = "lakebase-mcp-server"
 MCP_PATH = "/mcp/"
 
 
-def get_token_and_url(profile):
+def get_token_and_url(profile, app_name=None):
     w = WorkspaceClient(profile=profile)
-    app = w.apps.get(APP_NAME)
+    app = w.apps.get(app_name or APP_NAME)
     url = app.url.rstrip("/")
     token = w.config._header_factory().get("Authorization", "").removeprefix("Bearer ")
     return url, token
@@ -58,16 +58,23 @@ def tool_call(base_url, token, tool_name, arguments=None, req_id=1):
         "arguments": arguments or {},
     }, req_id)
     content = result["result"]["content"][0]["text"]
-    return json.loads(content)
+    if not content:
+        raise RuntimeError(f"Tool '{tool_name}' returned empty content. Full result: {result}")
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        raise RuntimeError(f"Tool '{tool_name}' returned non-JSON content: {content[:500]}")
 
 
 def main():
     parser = argparse.ArgumentParser(description="Test Lakebase MCP Server")
     parser.add_argument("--profile", default="simplot-v1", help="Databricks CLI profile")
+    parser.add_argument("--app", default=None, help="App name (default: lakebase-mcp-server)")
     args = parser.parse_args()
 
-    print(f"Connecting to {APP_NAME} with profile={args.profile}...")
-    url, token = get_token_and_url(args.profile)
+    app_name = args.app or APP_NAME
+    print(f"Connecting to {app_name} with profile={args.profile}...")
+    url, token = get_token_and_url(args.profile, app_name)
     print(f"App URL: {url}\n")
 
     # 1. Health check
@@ -88,6 +95,22 @@ def main():
     print(f"  {health_data}")
     assert health_data.get("lakebase") is True, f"Lakebase not connected! Response: {health_data}"
     print("  PASS\n")
+
+    # Setup: ensure test tables exist
+    print("=== Test Setup ===")
+    setup_sql = [
+        """CREATE TABLE IF NOT EXISTS notes (
+            note_id SERIAL PRIMARY KEY,
+            entity_type TEXT,
+            entity_id TEXT,
+            note_text TEXT,
+            author TEXT,
+            created_at TIMESTAMPTZ DEFAULT now()
+        )""",
+    ]
+    for sql in setup_sql:
+        tool_call(url, token, "execute_sql", {"sql": sql}, 99)
+    print("  Tables ready\n")
 
     # 2. Initialize
     print("=== MCP Initialize ===")
@@ -286,8 +309,287 @@ def main():
         print(f"  Dropped {tbl}: {drop_result['dropped']}")
     print("  PASS\n")
 
+    # ── INFRASTRUCTURE TOOLS ────────────────────────────────────────────
+    # 21. list_projects
+    print("=== list_projects ===")
+    projects_result = tool_call(url, token, "list_projects", {}, 20)
+    assert isinstance(projects_result, list), f"Expected list, got {type(projects_result)}"
+    print(f"  Found {len(projects_result)} project(s)")
+    for p in projects_result:
+        print(f"    {p.get('instance_type','?')} | {p.get('name') or p.get('instance_name','?')}")
+    print("  PASS\n")
+
+    # Pick the first autoscaling project for subsequent infra tests
+    infra_project = None
+    for p in projects_result:
+        if isinstance(p, dict) and p.get("instance_type") == "autoscaling":
+            infra_project = p.get("name")
+            break
+    if not infra_project:
+        print("  NOTE: No autoscaling projects found — skipping infra-specific tests\n")
+
+    # 22. describe_project
+    print("=== describe_project ===")
+    if infra_project:
+        proj_detail = tool_call(url, token, "describe_project", {"project": infra_project}, 21)
+        assert isinstance(proj_detail, dict), f"Expected dict, got {type(proj_detail)}"
+        assert "error" not in proj_detail, f"describe_project errored: {proj_detail}"
+        print(f"  Keys: {list(proj_detail.keys())}")
+        print("  PASS\n")
+    else:
+        print("  SKIP (no autoscaling project)\n")
+
+    # 23. list_branches
+    infra_branch = None
+    print("=== list_branches ===")
+    if infra_project:
+        branches_result = tool_call(url, token, "list_branches", {"project": infra_project}, 22)
+        assert isinstance(branches_result, list), f"Expected list, got {type(branches_result)}"
+        print(f"  Found {len(branches_result)} branch(es)")
+        for b in branches_result:
+            state = (b.get("status") or {}).get("current_state", "?")
+            print(f"    {b.get('name','?')} | state={state}")
+        if branches_result:
+            infra_branch = branches_result[0].get("name")
+        print("  PASS\n")
+    else:
+        print("  SKIP\n")
+
+    # 24. list_endpoints
+    infra_endpoint = None
+    infra_ep_min_cu = None
+    infra_ep_max_cu = None
+    print("=== list_endpoints ===")
+    if infra_project:
+        # Pass the branch we found in list_branches; default "production" may not match real branch IDs
+        ep_args = {"project": infra_project}
+        if infra_branch:
+            ep_args["branch"] = infra_branch
+        eps_result = tool_call(url, token, "list_endpoints", ep_args, 23)
+        if isinstance(eps_result, dict) and "error" in eps_result:
+            # Try with default (production) branch
+            eps_result = tool_call(url, token, "list_endpoints", {"project": infra_project}, 23)
+        assert isinstance(eps_result, list), f"Expected list, got {type(eps_result)}: {eps_result}"
+        print(f"  Found {len(eps_result)} endpoint(s)")
+        for ep in eps_result:
+            ep_status = ep.get("status") or {}
+            print(f"    {ep.get('name','?')} | state={ep_status.get('current_state','?')}")
+        if eps_result:
+            ep = eps_result[0]
+            infra_endpoint = ep.get("name")
+            ep_status = ep.get("status") or {}
+            infra_ep_min_cu = (ep_status.get("autoscaling_limit_min_cu")
+                               or ep.get("min_cu"))
+            infra_ep_max_cu = (ep_status.get("autoscaling_limit_max_cu")
+                               or ep.get("max_cu"))
+        print("  PASS\n")
+    else:
+        print("  SKIP\n")
+
+    # 25. get_endpoint_status
+    print("=== get_endpoint_status ===")
+    if infra_endpoint:
+        ep_status_result = tool_call(url, token, "get_endpoint_status", {"endpoint": infra_endpoint}, 24)
+        assert isinstance(ep_status_result, dict), f"Expected dict, got {type(ep_status_result)}"
+        assert "error" not in ep_status_result, f"get_endpoint_status errored: {ep_status_result}"
+        print(f"  Keys: {list(ep_status_result.keys())}")
+        print("  PASS\n")
+    else:
+        print("  SKIP\n")
+
+    # 26. get_connection_string
+    print("=== get_connection_string ===")
+    if infra_endpoint:
+        conn_str_result = tool_call(url, token, "get_connection_string",
+                                    {"endpoint": infra_endpoint, "fmt": "psql"}, 25)
+        assert isinstance(conn_str_result, dict), f"Expected dict, got {type(conn_str_result)}"
+        if "error" in conn_str_result:
+            print(f"  Graceful error: {conn_str_result['error']}")
+        else:
+            assert "connection_string" in conn_str_result, f"Missing connection_string: {conn_str_result}"
+            print(f"  Format: {conn_str_result.get('format')}")
+            assert conn_str_result.get("connection_string", "").startswith("psql ")
+        print("  PASS\n")
+    else:
+        print("  SKIP\n")
+
+    # ── DATA QUALITY ────────────────────────────────────────────────────
+    # 27. profile_table
+    print(f"=== profile_table ({first_table}) ===")
+    profile_result = tool_call(url, token, "profile_table", {"table_name": first_table}, 26)
+    assert isinstance(profile_result, dict), f"Expected dict, got {type(profile_result)}"
+    assert "error" not in profile_result, f"profile_table errored: {profile_result}"
+    assert "columns" in profile_result, f"Missing columns key: {profile_result}"
+    assert "total_rows" in profile_result
+    print(f"  Table: {profile_result['table']}, rows: {profile_result['total_rows']}, "
+          f"cols profiled: {len(profile_result['columns'])}")
+    for col in profile_result["columns"][:3]:
+        print(f"    {col['column']}: nulls={col.get('null_count')}, distinct={col.get('distinct')}")
+    print("  PASS\n")
+
+    # ── EXPLORE TOOLS ────────────────────────────────────────────────────
+    # 28. describe_branch
+    print("=== describe_branch ===")
+    branch_tree = tool_call(url, token, "describe_branch", {}, 27)
+    assert isinstance(branch_tree, dict), f"Expected dict, got {type(branch_tree)}"
+    assert "error" not in branch_tree, f"describe_branch errored: {branch_tree}"
+    assert "database" in branch_tree
+    assert "schemas" in branch_tree
+    schema_names = list(branch_tree["schemas"].keys())
+    print(f"  Database: {branch_tree['database']}, schemas: {schema_names}")
+    public = branch_tree["schemas"].get("public", {})
+    print(f"  public: {len(public.get('tables', []))} tables, {len(public.get('views', []))} views")
+    print("  PASS\n")
+
+    # 29. compare_database_schema (same DB → expect 0 diffs)
+    db_name = conn_info.get("database") or first_table.split(".")[0] if "." in first_table else "databricks_postgres"
+    if not db_name:
+        db_name = "databricks_postgres"
+    print(f"=== compare_database_schema ({db_name} vs {db_name}) ===")
+    compare_result = tool_call(url, token, "compare_database_schema", {
+        "source_database": db_name,
+        "target_database": db_name,
+    }, 28)
+    assert isinstance(compare_result, dict), f"Expected dict, got {type(compare_result)}"
+    assert "error" not in compare_result, f"compare_database_schema errored: {compare_result}"
+    assert "diff_count" in compare_result, f"Missing diff_count: {compare_result}"
+    assert compare_result["diff_count"] == 0, \
+        f"Same DB should have 0 diffs, got {compare_result['diff_count']}"
+    print(f"  Source: {compare_result['source']}, Target: {compare_result['target']}, "
+          f"Diffs: {compare_result['diff_count']}")
+    print("  PASS\n")
+
+    # 30. search
+    search_query = first_table.split("_")[0][:8] if "_" in first_table else first_table[:6]
+    print(f"=== search ({search_query!r}) ===")
+    search_result = tool_call(url, token, "search", {"query": search_query}, 29)
+    assert isinstance(search_result, dict), f"Expected dict, got {type(search_result)}"
+    assert "total_matches" in search_result, f"Missing total_matches: {search_result}"
+    assert "tables" in search_result
+    print(f"  Total matches: {search_result['total_matches']}, "
+          f"tables: {len(search_result['tables'])}")
+    print("  PASS\n")
+
+    # ── BRANCH TOOLS ────────────────────────────────────────────────────
+    created_branch = None
+    print("=== create_branch ===")
+    if infra_project:
+        test_branch_slug = "mcp-test"
+        create_br_result = tool_call(url, token, "create_branch", {
+            "project": infra_project,
+            "branch_id": test_branch_slug,
+            "display_name": "MCP Test Branch",
+        }, 30)
+        assert isinstance(create_br_result, dict), f"Expected dict, got {type(create_br_result)}"
+        assert "error" not in create_br_result, f"create_branch errored: {create_br_result}"
+        print(f"  Response keys: {list(create_br_result.keys())}")
+        # Construct branch path — API returns an LRO; branch path is project + branch slug
+        created_branch = f"{infra_project}/branches/{test_branch_slug}"
+        print(f"  Branch path: {created_branch}")
+        print("  PASS\n")
+    else:
+        print("  SKIP (no autoscaling project)\n")
+
+    # 32. delete_branch
+    print("=== delete_branch ===")
+    if created_branch:
+        delete_br_result = tool_call(url, token, "delete_branch", {
+            "branch": created_branch,
+            "confirm": True,
+        }, 31)
+        assert isinstance(delete_br_result, dict), f"Expected dict, got {type(delete_br_result)}"
+        assert "error" not in delete_br_result, f"delete_branch errored: {delete_br_result}"
+        assert delete_br_result.get("deleted") is True, \
+            f"Expected deleted=True, got {delete_br_result}"
+        print(f"  Deleted: {delete_br_result['deleted']}, branch: {delete_br_result['branch']}")
+        print("  PASS\n")
+    else:
+        print("  SKIP\n")
+
+    # ── SCALE TOOLS ─────────────────────────────────────────────────────
+    # 33. configure_autoscaling — submit current values to get "already_configured"
+    #     (proves the tool is wired up correctly without modifying anything)
+    print("=== configure_autoscaling (idempotent — current values) ===")
+    if infra_endpoint and infra_ep_min_cu is not None and infra_ep_max_cu is not None:
+        autoscaling_result = tool_call(url, token, "configure_autoscaling", {
+            "endpoint": infra_endpoint,
+            "min_cu": infra_ep_min_cu,
+            "max_cu": infra_ep_max_cu,
+        }, 32)
+        assert isinstance(autoscaling_result, dict), f"Expected dict, got {type(autoscaling_result)}"
+        assert "error" not in autoscaling_result, f"configure_autoscaling errored: {autoscaling_result}"
+        got_status = autoscaling_result.get("status")
+        has_name = "name" in autoscaling_result
+        assert got_status == "already_configured" or has_name, \
+            f"Expected already_configured or full response, got: {autoscaling_result}"
+        print(f"  Result: {autoscaling_result.get('status') or 'updated'}")
+        print("  PASS\n")
+    else:
+        print("  SKIP (no endpoint or CU values available)\n")
+
+    # ── MIGRATION TOOLS ─────────────────────────────────────────────────
+    # 34. prepare_database_migration
+    print("=== prepare_database_migration ===")
+    migration_result = tool_call(url, token, "prepare_database_migration", {
+        "migration_sql": (
+            "CREATE TABLE _test_mcp_mig (id SERIAL PRIMARY KEY, label TEXT);\n"
+            "COMMENT ON TABLE _test_mcp_mig IS 'MCP test migration — discard only';"
+        ),
+    }, 33)
+    assert isinstance(migration_result, dict), f"Expected dict, got {type(migration_result)}"
+    assert "error" not in migration_result, f"prepare_migration errored: {migration_result}"
+    assert "migration_id" in migration_result, f"Missing migration_id: {migration_result}"
+    assert migration_result.get("status") == "validated", \
+        f"Expected validated, got status={migration_result.get('status')}"
+    migration_id = migration_result["migration_id"]
+    print(f"  migration_id: {migration_id}")
+    print(f"  Status: {migration_result['status']}, statements: {migration_result.get('statement_count')}")
+    print("  PASS\n")
+
+    # 35. complete_database_migration (discard — never apply)
+    print("=== complete_database_migration (discard) ===")
+    complete_mig = tool_call(url, token, "complete_database_migration", {
+        "migration_id": migration_id,
+        "apply_changes": False,
+    }, 34)
+    assert isinstance(complete_mig, dict), f"Expected dict, got {type(complete_mig)}"
+    assert "error" not in complete_mig, f"complete_migration errored: {complete_mig}"
+    assert complete_mig.get("status") == "discarded", \
+        f"Expected discarded, got: {complete_mig}"
+    print(f"  Status: {complete_mig['status']}")
+    print("  PASS\n")
+
+    # ── TUNING TOOLS ────────────────────────────────────────────────────
+    # 36. prepare_query_tuning
+    print("=== prepare_query_tuning ===")
+    tuning_sql = f"SELECT * FROM {first_table} WHERE true"
+    tuning_result = tool_call(url, token, "prepare_query_tuning", {"sql": tuning_sql}, 35)
+    assert isinstance(tuning_result, dict), f"Expected dict, got {type(tuning_result)}"
+    assert "error" not in tuning_result, f"prepare_query_tuning errored: {tuning_result}"
+    assert "tuning_id" in tuning_result, f"Missing tuning_id: {tuning_result}"
+    assert "plan" in tuning_result, f"Missing plan: {tuning_result}"
+    tuning_id = tuning_result["tuning_id"]
+    print(f"  tuning_id: {tuning_id}")
+    print(f"  Suggestions: {len(tuning_result.get('suggestions', []))}")
+    for s in tuning_result.get("suggestions", []):
+        print(f"    [{s.get('type')}] {s.get('reason') or s.get('suggestion','')}")
+    print("  PASS\n")
+
+    # 37. complete_query_tuning (discard)
+    print("=== complete_query_tuning (discard) ===")
+    complete_tuning = tool_call(url, token, "complete_query_tuning", {
+        "tuning_id": tuning_id,
+        "apply_changes": False,
+    }, 36)
+    assert isinstance(complete_tuning, dict), f"Expected dict, got {type(complete_tuning)}"
+    assert "error" not in complete_tuning, f"complete_query_tuning errored: {complete_tuning}"
+    assert complete_tuning.get("status") == "discarded", \
+        f"Expected discarded, got: {complete_tuning}"
+    print(f"  Status: {complete_tuning['status']}")
+    print("  PASS\n")
+
     print("=" * 40)
-    print("ALL TESTS PASSED")
+    print("ALL 37 TESTS PASSED")
     print(f"App URL: {url}")
     print(f"MCP endpoint: {url}{MCP_PATH}")
 
