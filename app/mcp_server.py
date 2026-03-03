@@ -2406,13 +2406,15 @@ def _tool_create_branch(project: str, branch_id: str = "", parent_branch: str = 
         project_path = _resolve_project(project)
         parent_path = _resolve_branch(project, parent_branch)
 
-        # branch_id is required by the Databricks API. If not explicitly provided,
-        # auto-generate a slug from display_name: lowercase, strip non-alphanum, replace spaces with hyphens.
+        # branch_id is required by the Databricks API and must start with "br-".
+        # If not explicitly provided, auto-generate from display_name.
         effective_branch_id = branch_id
         if not effective_branch_id:
             slug_source = display_name or "dev"
             slug = re.sub(r'[^a-z0-9]+', '-', slug_source.lower()).strip('-')
-            effective_branch_id = slug or "dev"
+            slug = slug or "dev"
+            # Databricks branch IDs must start with "br-"
+            effective_branch_id = f"br-{slug}" if not slug.startswith("br-") else slug
 
         branch_body: dict = {
             "parent_branch": parent_path,
@@ -2485,7 +2487,7 @@ def _tool_configure_scale_to_zero(endpoint: str, enabled: bool, idle_timeout_sec
                     },
                 },
             },
-            "update_mask": "autoscaling.scale_to_zero",
+            "update_mask": "autoscaling.scale_to_zero.enabled,autoscaling.scale_to_zero.idle_timeout_seconds",
         })
         return [TextContent(type="text", text=json.dumps(resp, indent=2, default=str))]
     except Exception as e:
@@ -3704,8 +3706,19 @@ async def api_branches(request: Request):
     try:
         result = _tool_list_branches(project)
         branches = json.loads(result[0].text)
-        if isinstance(branches, list) and branches:
-            logger.info("Branch keys sample: %s", list(branches[0].keys()) if isinstance(branches[0], dict) else type(branches[0]))
+        if isinstance(branches, list):
+            for b in branches:
+                if not isinstance(b, dict):
+                    continue
+                # Ensure every branch has a human-readable display_name.
+                # The API may return display_name, or may not. Compute one from the branch slug.
+                if not b.get("display_name"):
+                    full_name = b.get("name", "")
+                    slug = full_name.split("/branches/")[-1] if "/branches/" in full_name else b.get("branch_id", full_name)
+                    # Format: strip "br-" prefix, drop random suffix (last segment if 3+ segments)
+                    s = slug[3:] if slug.startswith("br-") else slug
+                    parts = s.split("-")
+                    b["display_name"] = "-".join(parts[:-1]) if len(parts) >= 3 else s
         return JSONResponse(branches)
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=400)

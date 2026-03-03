@@ -5070,7 +5070,7 @@ async function loadBranches(project) {
         const sc = stateClass(state);
         const branchKey = b.name || b.id;
         const branchSlug = branchKey.includes('/branches/') ? branchKey.split('/branches/').pop() : branchKey;
-        const branchDisplay = b.display_name && b.display_name !== branchSlug ? b.display_name : formatBranchSlug(branchSlug);
+        const branchDisplay = b.display_name || formatBranchSlug(branchSlug);
         const parentRaw = b.parent_branch || b.parent || '--';
         const parentSlug = parentRaw !== '--' && parentRaw.includes('/branches/') ? parentRaw.split('/branches/').pop() : parentRaw;
         const parent = parentSlug !== '--' ? formatBranchSlug(parentSlug) : '--';
