@@ -150,31 +150,39 @@ def _get_autoscale_credentials():
     branch = os.environ.get("LAKEBASE_BRANCH", "production")
     endpoint_id = os.environ.get("LAKEBASE_ENDPOINT", "")
 
-    # Build or discover endpoint name
+    branch_path = f"projects/{project}/branches/{branch}"
+
+    # Build or discover endpoint name using REST API (w.postgres.* SDK methods are unreliable)
     if _autoscale_endpoint:
         endpoint_name = _autoscale_endpoint
     elif endpoint_id:
-        endpoint_name = f"projects/{project}/branches/{branch}/endpoints/{endpoint_id}"
+        endpoint_name = f"{branch_path}/endpoints/{endpoint_id}"
     else:
         # Auto-discover first endpoint on the branch
-        branch_path = f"projects/{project}/branches/{branch}"
-        endpoints = list(w.postgres.list_endpoints(parent=branch_path))
+        resp = w.api_client.do("GET", f"/api/2.0/postgres/{branch_path}/endpoints")
+        endpoints = resp.get("endpoints", [])
         if not endpoints:
             raise RuntimeError(f"No endpoints found on branch: {branch_path}")
-        endpoint_name = endpoints[0].name
+        ep0 = endpoints[0]
+        endpoint_name = ep0.get("name") if isinstance(ep0, dict) else getattr(ep0, "name", str(ep0))
         logger.info("Auto-discovered endpoint: %s", endpoint_name)
 
     _autoscale_endpoint = endpoint_name
 
     # Get host from endpoint
-    ep = w.postgres.get_endpoint(name=endpoint_name)
-    if not ep.status or not ep.status.hosts or not ep.status.hosts.host:
+    ep_detail = w.api_client.do("GET", f"/api/2.0/postgres/{endpoint_name}")
+    ep_status = ep_detail.get("status", {})
+    ep_hosts = ep_status.get("hosts", {}) if isinstance(ep_status, dict) else {}
+    host = ep_hosts.get("host", "") if isinstance(ep_hosts, dict) else ""
+    if not host:
         raise RuntimeError(f"Endpoint {endpoint_name} has no host — is it running?")
-    host = ep.status.hosts.host
 
     # Generate credential
-    cred = w.postgres.generate_database_credential(endpoint=endpoint_name)
+    cred_resp = w.api_client.do("POST", "/api/2.0/postgres/credentials", body={"endpoint": endpoint_name})
     _token_timestamp = time.time()
+    pg_pass = cred_resp.get("token", "")
+    if not pg_pass:
+        raise RuntimeError(f"Failed to generate credential for endpoint '{endpoint_name}'")
 
     # User = current workspace user
     user = w.current_user.me().user_name
@@ -183,7 +191,7 @@ def _get_autoscale_credentials():
         "host": host,
         "port": 5432,
         "user": user,
-        "password": cred.token,
+        "password": pg_pass,
         "database": os.environ.get("LAKEBASE_DATABASE", "databricks_postgres"),
     }
 
@@ -3106,7 +3114,10 @@ async def api_query(request: Request):
     sql = body.get("sql", "")
     try:
         result = _tool_read_query(sql)
-        data = json.loads(result[0].text)
+        text = result[0].text
+        if text.startswith("Error"):
+            return JSONResponse({"error": text}, status_code=400)
+        data = json.loads(text)
         if isinstance(data, str) and data.startswith("Error"):
             return JSONResponse({"error": data}, status_code=400)
         return JSONResponse(data)
