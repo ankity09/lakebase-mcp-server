@@ -2545,6 +2545,19 @@ def _tool_configure_autoscaling(endpoint: str, min_cu: float, max_cu: float):
         return [TextContent(type="text", text=json.dumps({"error": f"min_cu and max_cu must be numbers, got: min_cu={min_cu!r}, max_cu={max_cu!r}"}, indent=2))]
     try:
         w = _get_ws()
+        # GET current state to avoid "non-default value" error when submitting unchanged values
+        get_resp = w.api_client.do("GET", f"/api/2.0/postgres/{endpoint}")
+        status = get_resp.get("status") or {}
+        current_min = status.get("autoscaling_limit_min_cu")
+        current_max = status.get("autoscaling_limit_max_cu")
+        if current_min is not None and current_max is not None:
+            if float(current_min) == min_cu and float(current_max) == max_cu:
+                return [TextContent(type="text", text=json.dumps({
+                    "status": "already_configured",
+                    "min_cu": min_cu,
+                    "max_cu": max_cu,
+                    "message": f"Autoscaling already configured: min_cu={min_cu}, max_cu={max_cu}",
+                }, indent=2))]
         resp = w.api_client.do("PATCH", f"/api/2.0/postgres/{endpoint}", body={
             "endpoint": {
                 "name": endpoint,

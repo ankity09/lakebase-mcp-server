@@ -5220,14 +5220,16 @@ async function loadEndpoints(project, branch) {
       // Host is in status.hosts.host per SDK EndpointStatus
       const host = ep.status?.hosts?.host || ep.host || ep.hostname || '--';
       const branchTag = ep._branch ? `<span class="badge badge-type" style="font-size:10px;margin-left:6px">${escapeHtml(formatBranchSlug(ep._branch))}</span>` : '';
-      // Real field names from SDK EndpointSpec
+      // spec is null in API responses; real values are in status.*
       const spec = ep.spec || {};
-      const minCu = spec.autoscaling_limit_min_cu ?? ep.min_cu ?? ep.autoscaling?.min_cu ?? '--';
-      const maxCu = spec.autoscaling_limit_max_cu ?? ep.max_cu ?? ep.autoscaling?.max_cu ?? '--';
-      // spec.no_suspension is the INVERSE of scale-to-zero enabled
-      const stzEnabled = spec.no_suspension !== undefined ? !spec.no_suspension : (ep.scale_to_zero?.enabled ?? false);
-      const idleTimeoutStr = spec.suspend_timeout_duration || String(ep.scale_to_zero?.idle_timeout_seconds ?? 300);
-      const idleTimeout = parseInt(idleTimeoutStr) || 300;
+      const epStatus = ep.status || {};
+      const minCu = spec.autoscaling_limit_min_cu ?? epStatus.autoscaling_limit_min_cu ?? ep.min_cu ?? ep.autoscaling?.min_cu ?? '--';
+      const maxCu = spec.autoscaling_limit_max_cu ?? epStatus.autoscaling_limit_max_cu ?? ep.max_cu ?? ep.autoscaling?.max_cu ?? '--';
+      // S2Z fields: read from status (spec is null). no_suspension=true means S2Z OFF.
+      const rawNoSuspension = spec.no_suspension ?? epStatus.no_suspension;
+      const stzEnabled = rawNoSuspension !== undefined ? !rawNoSuspension : null;
+      const idleTimeoutStr = spec.suspend_timeout_duration || epStatus.suspend_timeout_duration || '';
+      const idleTimeoutSec = parseInt(idleTimeoutStr) || null;
 
       // Use slug as DOM element key (safe characters); pass fullName to API calls
       const epKey = name;
@@ -5252,19 +5254,14 @@ async function loadEndpoints(project, branch) {
         </div>
 
         <div style="margin-top:12px; padding-top:12px; border-top:1px solid var(--border);">
-          <label style="margin-bottom:8px; font-weight:600; color:var(--text-primary);">Scale-to-Zero</label>
-          <div style="display:flex; align-items:center; gap:12px; margin-bottom:8px;">
-            <label class="toggle">
-              <input type="checkbox" id="ep-stz-${escapeHtml(epKey)}" ${stzEnabled ? 'checked' : ''}>
-              <span class="slider"></span>
-            </label>
-            <span style="font-size:12px; color:var(--text-secondary);">${stzEnabled ? 'Enabled' : 'Disabled'}</span>
+          <label style="margin-bottom:6px; font-weight:600; color:var(--text-primary);">Scale-to-Zero</label>
+          <div style="font-size:12px; color:var(--text-secondary); margin-bottom:4px;">
+            ${stzEnabled === null ? '<span style="color:var(--text-muted)">State unknown</span>' :
+              stzEnabled
+                ? '<span style="color:var(--green)">&#10003; Enabled</span>' + (idleTimeoutSec ? ` &middot; idle: ${idleTimeoutSec}s` : '')
+                : '<span style="color:var(--text-muted)">&#10007; Disabled</span>'}
           </div>
-          <div class="form-group" style="max-width:200px;">
-            <label>Idle timeout (seconds)</label>
-            <input type="number" id="ep-idle-${escapeHtml(epKey)}" value="${idleTimeout}" min="0">
-          </div>
-          <button class="btn btn-sm btn-secondary" onclick="updateScaleToZero('${escapeHtml(epKey)}', '${escapeHtml(fullName)}')">Update S2Z</button>
+          <div style="font-size:11px; color:var(--text-muted);">Configure in the Databricks UI &rarr; Lakebase &rarr; branch &rarr; endpoint &rarr; Configure</div>
         </div>
         <div id="ep-result-${escapeHtml(epKey)}" style="margin-top:8px;"></div>
       </div>`;
@@ -5296,23 +5293,6 @@ async function updateEndpointConfig(epKey, epFullName) {
   }
 }
 
-async function updateScaleToZero(epKey, epFullName) {
-  const enabled = document.getElementById('ep-stz-' + epKey).checked;
-  const idleTimeout = parseInt(document.getElementById('ep-idle-' + epKey).value, 10);
-  const resultDiv = document.getElementById('ep-result-' + epKey);
-  resultDiv.innerHTML = '<span class="spinner"></span>';
-  try {
-    const resp = await api(`/api/endpoints/${encodeURIComponent(epFullName)}/config`, {
-      method: 'PATCH',
-      body: JSON.stringify({ scale_to_zero: { enabled: enabled, idle_timeout_seconds: idleTimeout } }),
-    });
-    resultDiv.innerHTML = `<div class="result success" style="font-size:11px;padding:8px;">${escapeHtml(JSON.stringify(resp))}</div>`;
-    showToast('Scale-to-zero config updated', 'success');
-  } catch (e) {
-    resultDiv.innerHTML = `<div class="result error" style="font-size:11px;padding:8px;">${escapeHtml(e.message)}</div>`;
-    showToast('Failed to update scale-to-zero: ' + e.message, 'error');
-  }
-}
 
 // ══════════════════════════════════════════════════════════════════════
 // PROFILER
