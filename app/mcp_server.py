@@ -1620,7 +1620,7 @@ async def handle_call_tool(name: str, arguments: dict):
             return [TextContent(type="text", text=f"Unknown tool: {name}")]
     except Exception as e:
         logger.exception("Tool %s failed", name)
-        return [TextContent(type="text", text=f"Error: {e}")]
+        return [TextContent(type="text", text=json.dumps({"error": str(e)}))]
 
 
 # ── MCP Resources ────────────────────────────────────────────────────
@@ -3905,8 +3905,11 @@ async def api_setup_role_sql(request: Request):
             f'SECURITY LABEL FOR databricks_auth ON ROLE "{user_name}"\n'
             f"  IS 'id={scim_id},type=service_principal';\n"
             f'GRANT ALL ON DATABASE "{database}" TO "{user_name}";\n'
+            f'GRANT ALL ON SCHEMA public TO "{user_name}";\n'
             f'GRANT ALL ON ALL TABLES IN SCHEMA public TO "{user_name}";\n'
-            f'GRANT USAGE ON SCHEMA public TO "{user_name}";'
+            f'GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO "{user_name}";\n'
+            f'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO "{user_name}";\n'
+            f'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO "{user_name}";'
         )
 
         return JSONResponse({
@@ -3988,34 +3991,43 @@ class DatabaseMCPRouter:
         if scope["type"] not in ("http", "websocket"):
             return
         path = scope.get("path", "")
-        # Mount at /db strips the /db prefix, so path = /{database}/mcp/...
+        # Starlette Mount does NOT strip the mount prefix from scope["path"].
+        # Full path is /db/{database}/mcp/... so parts = ["db", "{database}", "mcp", ...]
+        # Also handle the stripped case (/{database}/mcp/...) for forward-compatibility.
         parts = path.strip("/").split("/")
-        if len(parts) >= 2 and parts[1] == "mcp":
+        if len(parts) >= 3 and parts[0] == "db" and parts[2] == "mcp":
+            # Full path: /db/{database}/mcp/
+            database = parts[1]
+            mcp_suffix = parts[2:]  # ["mcp", ...]
+        elif len(parts) >= 2 and parts[1] == "mcp":
+            # Stripped path: /{database}/mcp/ (if Starlette ever strips in future)
             database = parts[0]
-            # Validate database name
-            if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_\-]*$', database):
-                resp = JSONResponse(
-                    {"error": f"Invalid database name: {database}"},
-                    status_code=400,
-                )
-                await resp(scope, receive, send)
-                return
-            # Rewrite scope path to /mcp/...
-            new_path = "/" + "/".join(parts[1:])
-            if not new_path.endswith("/"):
-                new_path += "/"
-            scope = dict(scope, path=new_path)
-            token = _request_database.set(database)
-            try:
-                await self._session_mgr.handle_request(scope, receive, send)
-            finally:
-                _request_database.reset(token)
+            mcp_suffix = parts[1:]  # ["mcp", ...]
         else:
             resp = JSONResponse(
                 {"error": "Expected /db/{database}/mcp/"},
                 status_code=400,
             )
             await resp(scope, receive, send)
+            return
+        # Validate database name
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_\-]*$', database):
+            resp = JSONResponse(
+                {"error": f"Invalid database name: {database}"},
+                status_code=400,
+            )
+            await resp(scope, receive, send)
+            return
+        # Rewrite scope path to /mcp/...
+        new_path = "/" + "/".join(mcp_suffix)
+        if not new_path.endswith("/"):
+            new_path += "/"
+        scope = dict(scope, path=new_path)
+        token = _request_database.set(database)
+        try:
+            await self._session_mgr.handle_request(scope, receive, send)
+        finally:
+            _request_database.reset(token)
 
 
 @contextlib.asynccontextmanager
