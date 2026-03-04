@@ -4,7 +4,7 @@ A reusable [Model Context Protocol](https://modelcontextprotocol.io) (MCP) serve
 
 ## What It Does
 
-- Exposes **34 MCP tools** with safety annotations for schema inspection, CRUD, general SQL, DDL, transactions, query analysis, performance monitoring, infrastructure management, branch management, autoscaling config, data quality profiling, safe migrations, query tuning, and cross-database search
+- Exposes **33 MCP tools** with safety annotations for schema inspection, CRUD, general SQL, DDL, transactions, query analysis, performance monitoring, infrastructure management, branch management, autoscaling config, data quality profiling, safe migrations, query tuning, and cross-database search
 - **2 MCP resources** for table and schema discovery
 - **3 MCP prompts** for database exploration, schema design, and query optimization
 - **MCP tool annotations** (`readOnlyHint`, `destructiveHint`, `idempotentHint`) on every tool for client-side safety UI
@@ -69,15 +69,20 @@ command:
   - mcp_server.py
 
 env:
+  - name: LAKEBASE_PROJECT_NAME
+    value: "My Project"            # human-readable label shown in the web UI
   - name: LAKEBASE_PROJECT
-    value: "my-project"
+    value: "b10eb92b-dc0e-4ccf-ba26-0653c5e7ebec"  # project UUID (from Lakebase project URL)
   - name: LAKEBASE_BRANCH
-    value: "production"            # optional, default: production
+    value: "br-cool-haze-d2hbxj2m"  # branch ID (not display name — find it in branch overview)
   - name: LAKEBASE_DATABASE
     value: "my_db"                 # optional, default: databricks_postgres
-  - name: LAKEBASE_ENDPOINT
-    value: "ep-primary"            # optional, auto-discovered if omitted
 ```
+
+**Finding the values:**
+- `LAKEBASE_PROJECT_NAME`: Any human-readable label (e.g. `"Manufacturing EPL"`, `"Supply Chain Demo"`)
+- `LAKEBASE_PROJECT`: In Databricks → Lakebase → click your project → the UUID is in the page URL
+- `LAKEBASE_BRANCH`: In Databricks → Lakebase → your project → click the branch → **ID** field (looks like `br-cool-haze-d2hbxj2m`). This is **not** the display name (e.g. `production`)
 
 No `resources` block needed for autoscaling — the server handles endpoint discovery and authentication internally.
 
@@ -173,11 +178,20 @@ From the output, note:
 
 If you want the app to switch to Lakebase instances that are **not** in `app.yaml` (via the UI instance switcher), you must manually create the role, security label, and grants on each one:
 
+The easiest way to get the correct SQL (with your SP's values pre-filled) is to call the built-in helper:
+
+```bash
+curl -H "Authorization: Bearer <token>" https://<app-url>/api/setup-role-sql
+```
+
+Copy the `sql` field from the response and run it in the Lakebase SQL editor. Alternatively, build it manually:
+
 ```bash
 # Replace these with your values
-SP_CLIENT_ID="ecbb98b7-7186-43cf-ab8d-ac56bffc0f8e"   # from step 5a
-SP_ID="70866217708507"                                   # from step 5a
-INSTANCE="my-other-instance"                             # target instance name
+SP_CLIENT_ID="ecbb98b7-7186-43cf-ab8d-ac56bffc0f8e"   # from step 5a (UUID format)
+SP_ID="70866217708507"                                   # from step 5a (integer SCIM ID)
+DATABASE="my_database"                                   # target database name
+INSTANCE="my-instance"                                   # target instance name
 PROFILE="my-profile"                                     # Databricks CLI profile
 
 databricks psql $INSTANCE --profile=$PROFILE -- -c "
@@ -189,30 +203,39 @@ END \$\$;
 
 -- 2. Configure OAuth security label (required for token auth)
 SECURITY LABEL FOR \"databricks_auth\" ON ROLE \"$SP_CLIENT_ID\"
-  IS 'id=$SP_ID,type=SERVICE_PRINCIPAL';
+  IS 'id=$SP_ID,type=service_principal';
 
--- 3. Grant access to existing objects
+-- 3. Grant access to the database and schema
+GRANT ALL ON DATABASE \"$DATABASE\" TO \"$SP_CLIENT_ID\";
+GRANT ALL ON SCHEMA public TO \"$SP_CLIENT_ID\";
+
+-- 4. Grant access to existing tables and sequences
 GRANT ALL ON ALL TABLES IN SCHEMA public TO \"$SP_CLIENT_ID\";
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO \"$SP_CLIENT_ID\";
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO \"$SP_CLIENT_ID\";
 
--- 4. Grant access to future objects
+-- 5. Grant access to future tables and sequences
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
   GRANT ALL ON TABLES TO \"$SP_CLIENT_ID\";
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
-  GRANT USAGE, SELECT ON SEQUENCES TO \"$SP_CLIENT_ID\";
+  GRANT ALL ON SEQUENCES TO \"$SP_CLIENT_ID\";
 "
 ```
 
-**All three steps are required:**
+> **Who can run this SQL?** `CREATE ROLE` and `SECURITY LABEL` require PostgreSQL superuser. In Lakebase, only the workspace admin or the project owner has superuser access. Run the SQL in the Lakebase UI while logged in as that user.
+
+**All steps are required:**
 1. `CREATE ROLE ... WITH LOGIN` — creates the PostgreSQL role
 2. `SECURITY LABEL FOR "databricks_auth"` — maps the OAuth token to the role (without this, you get `no role security label is configured`)
-3. `GRANT` statements — gives the role permission to read/write tables
+3. `GRANT ALL ON DATABASE` and `GRANT ALL ON SCHEMA public` — grants database-level and schema-level access (required for CREATE TABLE and DDL)
+4. `GRANT ALL ON ALL TABLES/SEQUENCES` — grants access to existing objects
+5. `ALTER DEFAULT PRIVILEGES` — grants access to future objects created by other users
 
 To grant access on **all** instances at once:
 
 ```bash
 SP_CLIENT_ID="ecbb98b7-7186-43cf-ab8d-ac56bffc0f8e"
 SP_ID="70866217708507"
+DATABASE="my_database"
 PROFILE="my-profile"
 
 for INSTANCE in instance-a instance-b instance-c; do
@@ -223,9 +246,13 @@ for INSTANCE in instance-a instance-b instance-c; do
   EXCEPTION WHEN duplicate_object THEN NULL;
   END \$\$;
   SECURITY LABEL FOR \"databricks_auth\" ON ROLE \"$SP_CLIENT_ID\"
-    IS 'id=$SP_ID,type=SERVICE_PRINCIPAL';
+    IS 'id=$SP_ID,type=service_principal';
+  GRANT ALL ON DATABASE \"$DATABASE\" TO \"$SP_CLIENT_ID\";
+  GRANT ALL ON SCHEMA public TO \"$SP_CLIENT_ID\";
   GRANT ALL ON ALL TABLES IN SCHEMA public TO \"$SP_CLIENT_ID\";
-  GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO \"$SP_CLIENT_ID\";
+  GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO \"$SP_CLIENT_ID\";
+  ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO \"$SP_CLIENT_ID\";
+  ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO \"$SP_CLIENT_ID\";
   "
 done
 ```
@@ -237,7 +264,7 @@ curl https://<app-url>/health
 # {"status":"ok","lakebase":true}
 
 curl https://<app-url>/api/tools | python3 -c "import sys,json; print(len(json.load(sys.stdin)), 'tools')"
-# 34 tools
+# 33 tools
 ```
 
 Visit `https://<app-url>/` for the web UI.
@@ -269,7 +296,7 @@ In your MAS Supervisor configuration:
 2. Select the UC HTTP connection from Step 1
 3. Set the agent description (this is what the supervisor uses for routing):
    > "Execute Lakebase database operations — read and write to operational tables including inventory, shipments, orders, and supply chain data."
-4. Click **Rediscover tools** — the supervisor will detect all 34 MCP tools
+4. Click **Rediscover tools** — the supervisor will detect all 33 MCP tools
 
 ### Step 3: Test
 
@@ -326,7 +353,7 @@ Deploy one Lakebase MCP Server app, then create separate UC HTTP connections for
 
 Each MAS Supervisor connects to the same app URL but with a different `base_path`. The server creates isolated connection pools per database on demand.
 
-## MCP Tools (34)
+## MCP Tools (33)
 
 All tools include MCP annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`) so clients can display safety warnings before destructive operations.
 
@@ -394,7 +421,6 @@ All tools include MCP annotations (`readOnlyHint`, `destructiveHint`, `idempoten
 | Tool | Annotations | Description |
 |------|-------------|-------------|
 | `configure_autoscaling` | write, idempotent | Set min/max compute units (CU) on an autoscaling endpoint |
-| `configure_scale_to_zero` | write, idempotent | Enable/disable scale-to-zero (suspend) with configurable idle timeout |
 
 ### Data Quality (QUALITY)
 
@@ -468,7 +494,7 @@ The root URL (`/`) serves a Neon.tech-inspired single-page application with fixe
 **Database**
 - **Database Explorer** — Browse tables, view column schemas and constraints, sample data
 - **SQL Query** — Run read-only queries with tabular results (Ctrl/Cmd+Enter to execute)
-- **MCP Tools** — Tool reference cards categorized by type + interactive playground for all 34 tools
+- **MCP Tools** — Tool reference cards categorized by type + interactive playground for all 33 tools
 
 **Infrastructure**
 - **Projects** — Card grid of Lakebase projects with status badges and branch counts
@@ -542,6 +568,12 @@ The sidebar includes an **instance switcher** (switch between all Lakebase insta
 |----------|--------|-------------|
 | `/api/profile/{table}` | GET | Column-level profiling statistics |
 
+### Setup
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/setup-role-sql` | GET | Generate OAuth role SQL for the app SP (autoscaling mode) |
+
 ## Reuse Across Demos
 
 This server is fully generic. To point it at a different Lakebase database:
@@ -570,8 +602,8 @@ python app/mcp_server.py
 ### Autoscaling mode
 
 ```bash
-export LAKEBASE_PROJECT=my-project
-export LAKEBASE_BRANCH=production
+export LAKEBASE_PROJECT=b10eb92b-dc0e-4ccf-ba26-0653c5e7ebec   # project UUID (from URL)
+export LAKEBASE_BRANCH=br-cool-haze-d2hbxj2m                    # branch ID (not display name)
 export LAKEBASE_DATABASE=my_db
 
 pip install -r app/requirements.txt
@@ -601,10 +633,11 @@ Server starts on port 8000. MCP endpoint: `http://localhost:8000/mcp/`. Web UI: 
 | `PGDATABASE` | — | Database name (provisioned mode) |
 | `PGUSER` | — | PostgreSQL user |
 | `PGSSLMODE` | `require` | SSL mode |
-| `LAKEBASE_PROJECT` | — | Autoscaling project name (triggers autoscaling mode) |
-| `LAKEBASE_BRANCH` | `production` | Autoscaling branch name |
+| `LAKEBASE_PROJECT` | — | Autoscaling project **UUID** (triggers autoscaling mode; find in Lakebase project URL) |
+| `LAKEBASE_PROJECT_NAME` | — | Human-readable label for the project shown in the web UI (single-project setup) |
+| `LAKEBASE_PROJECT_NAMES` | — | Friendly names for multiple projects: `"uuid1=Name One,uuid2=Name Two"` |
+| `LAKEBASE_BRANCH` | — | Autoscaling branch **ID** (e.g. `br-cool-haze-d2hbxj2m`). **Not** the display name. Find in branch overview → ID field |
 | `LAKEBASE_DATABASE` | `databricks_postgres` | Database name (autoscaling mode) |
-| `LAKEBASE_ENDPOINT` | auto-discovered | Autoscaling endpoint ID |
 | `MAX_ROWS` | `1000` | Maximum rows returned by read queries |
 | `DATABRICKS_APP_PORT` | `8000` | Server port |
 
